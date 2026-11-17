@@ -1,0 +1,5 @@
+# dsh-prompt-enhancer — ModuleLoader bundle registration.
+- insert:
+    - id: dsh-prompt-enhancer
+      name: 'dsh-prompt-enhancer'
+      config: {}
