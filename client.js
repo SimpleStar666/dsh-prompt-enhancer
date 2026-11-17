@@ -94,6 +94,7 @@ window.__ModuleLoader__.load({
       const [failed, setFailed] = useState(false)
       const [undo, setUndo] = useState(null)
       const request = useRef(0)
+       const abort = useRef(null)
 
       const canOperate = typeof inputActions?.setDraft === 'function' && sessionId != null
       // Some host builds do not pass a draft hook; fall back to reading the
@@ -114,7 +115,11 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [error])
 
-      useEffect(() => () => { request.current += 1 }, [])
+      useEffect(() => () => {
+         request.current += 1
+         abort.current?.abort()
+         abort.current = null
+       }, [])
 
       const onClick = useCallback(async () => {
         if (busy) return
@@ -131,6 +136,8 @@ window.__ModuleLoader__.load({
           return
         }
         const revision = ++request.current
+         const controller = typeof AbortController === 'function' ? new AbortController() : null
+         abort.current = controller
         setBusy(true)
         setError(null)
         setFailed(false)
@@ -139,6 +146,7 @@ window.__ModuleLoader__.load({
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             credentials: 'same-origin',
+             ...(controller ? { signal: controller.signal } : {}),
             body: JSON.stringify({ text: raw, sessionId }),
           })
           let payload = null
@@ -158,7 +166,8 @@ window.__ModuleLoader__.load({
           setError(cause?.message ?? String(cause))
           setFailed(true)
         } finally {
-          if (request.current === revision) setBusy(false)
+          if (abort.current === controller) abort.current = null
+           if (request.current === revision) setBusy(false)
         }
       }, [busy, draftFromHook, undo, inputActions, sessionId, t])
 

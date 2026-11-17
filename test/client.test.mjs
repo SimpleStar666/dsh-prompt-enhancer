@@ -41,6 +41,7 @@ function loadClient({ React = {}, fetch = async () => { throw new Error('Unexpec
     navigator: { clipboard: { writeText: async () => {} } },
     setTimeout,
     clearTimeout,
+    AbortController,
   });
   runInContext(bundle, context, { filename: 'client.js' });
   assert.equal(loads.length, 1);

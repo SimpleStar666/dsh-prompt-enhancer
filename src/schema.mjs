@@ -16,8 +16,8 @@ export const DEFAULTS = Object.freeze({
   model: '',
   /** Max output tokens for the rewrite call. */
   maxTokens: 2048,
-  /** Rewrite timeout in milliseconds. */
-  timeoutMs: 20000,
+  /** Rewrite timeout in milliseconds; reasoning models may need a long first-token window. */
+  timeoutMs: 120000,
   /** Inputs longer than this are refused by the rewrite endpoint (still shown locally). */
   maxPromptChars: 12000,
   /** Include safety/ambiguity warnings in the returned metadata. */
@@ -61,7 +61,7 @@ export function normalizeConfig(raw) {
 
   out.maxPromptChars = Math.max(1, Math.min(100_000, Math.trunc(out.maxPromptChars)));
   out.maxTokens = Math.max(256, Math.min(16_384, Math.trunc(out.maxTokens)));
-  out.timeoutMs = Math.max(1_000, Math.min(120_000, Math.trunc(out.timeoutMs)));
+  out.timeoutMs = Math.max(1_000, Math.min(300_000, Math.trunc(out.timeoutMs)));
   out.order = Math.max(0, Math.min(10_000, Math.trunc(out.order)));
   return out;
 }

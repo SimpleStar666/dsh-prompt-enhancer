@@ -85,6 +85,21 @@ test('rewriteWithLlm builds a valid dsh-llm request and guards runaway output', 
   await assert.rejects(rewriteWithLlm(mockLlm('   '), route, raw), /empty/);
 });
 
+test('rewrite distinguishes its deadline from a caller cancellation', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const slow = { stream(request) {
+    return (async function* () {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      if (request.signal.aborted) yield { type: 'finish', reason: { kind: 'aborted' } };
+      else { yield { type: 'text-delta', text: 'ok' }; yield { type: 'finish', reason: { kind: 'stop' } }; }
+    })();
+  } };
+  await assert.rejects(rewriteWithLlm(slow, route, 'x', { timeoutMs: 5 }), /timed out after 1000ms/);
+  const caller = new AbortController();
+  caller.abort();
+  await assert.rejects(rewriteWithLlm(slow, route, 'x', { timeoutMs: 1000, signal: caller.signal }), /cancelled/);
+});
+
 test('rewrite defaults are bounded and reproducible', () => {
   assert.ok(REWRITE_DEFAULTS.maxTokens > 0);
   assert.ok(REWRITE_DEFAULTS.timeoutMs > 0);

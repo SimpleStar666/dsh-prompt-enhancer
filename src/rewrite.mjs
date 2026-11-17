@@ -11,7 +11,9 @@ import { analyzeIntent } from './intent.mjs';
 
 export const REWRITE_DEFAULTS = Object.freeze({
   maxTokens: 2048,
-  timeoutMs: 20000,
+  // DeepSeek reasoning models can spend well over 20s before their first token.
+  // Keep this below DSH's default 300s idle timeout while avoiding false cancels.
+  timeoutMs: 120000,
   maxInputChars: 12000,
   /** Runaway guard: refuse outputs longer than max(600, this × input length). */
   maxOutputRatio: 3.5,
@@ -95,14 +97,20 @@ export async function streamText(llm, request) {
  * @param {{stream(options: object): AsyncIterable<object>}} llm
  * @param {{provider: string, model: string}} route
  * @param {string} raw
- * @param {object} settings — REWRITE_DEFAULTS plus locale
+ * @param {object} settings — REWRITE_DEFAULTS plus locale and optional caller signal
  * @returns {Promise<string>}
  */
 export async function rewriteWithLlm(llm, route, raw, settings = {}) {
   const config = { ...REWRITE_DEFAULTS, ...settings };
-  const timeout = Number.isFinite(config.timeoutMs) ? Math.max(1000, Math.min(120000, config.timeoutMs)) : REWRITE_DEFAULTS.timeoutMs;
-  const signal = AbortSignal.timeout(timeout);
-  const collected = await streamText(llm, {
+  const timeout = Number.isFinite(config.timeoutMs) ? Math.max(1000, Math.min(300000, config.timeoutMs)) : REWRITE_DEFAULTS.timeoutMs;
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  const callerSignal = config.signal && typeof config.signal.aborted === 'boolean' ? config.signal : null;
+  const signal = callerSignal && typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([callerSignal, timeoutSignal])
+    : (callerSignal ?? timeoutSignal);
+  let collected;
+  try {
+    collected = await streamText(llm, {
     provider: route.provider,
     model: route.model,
     maxTokens: config.maxTokens,
@@ -117,6 +125,15 @@ export async function rewriteWithLlm(llm, route, raw, settings = {}) {
     purpose: 'prompt-enhancer',
     signal,
   });
+  } catch (error) {
+    // dsh-llm reports both caller cancellation and our deadline as `aborted`.
+    // Preserve the distinction so a slow reasoning model is actionable rather
+    // than misleadingly reported as if the user clicked cancel.
+    if (timeoutSignal.aborted && !callerSignal?.aborted) {
+      throw new Error(`the model request timed out after ${timeout}ms`);
+    }
+    throw error;
+  }
   const cleaned = cleanModelOutput(collected);
   if (!cleaned) throw new Error('the model returned an empty prompt');
   const limit = Math.min(Math.max(Math.round(raw.length * config.maxOutputRatio), 600), config.maxOutputChars);

@@ -233,6 +233,7 @@ export function apply(ctx, rawConfig) {
             locale: effectiveConfig.locale,
             maxTokens: effectiveConfig.maxTokens,
             timeoutMs: effectiveConfig.timeoutMs,
+             signal: request?.signal,
           });
           if (route === lastRoute || (!config.provider && !config.model)) lastRoute = route;
           const local = enhancePrompt(prompt, effectiveConfig);

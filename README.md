@@ -1,6 +1,6 @@
 # dsh-prompt-enhancer
 
-**提示词增强 v0.3.0**：DSH 输入框里的一键增强按钮 ✨。点击一次，当前草稿经 DSH 已配置的模型改写后回填输入框，供你审阅后再发送；再点一次撤销，恢复精确原文。**从不自动发送。**
+**提示词增强 v0.3.2**：DSH 输入框里的一键增强按钮 ✨。点击一次，当前草稿经 DSH 已配置的模型改写后回填输入框，供你审阅后再发送；再点一次撤销，恢复精确原文。**从不自动发送。**
 
 ## 为什么是 v0.3
 
@@ -36,7 +36,7 @@ import { rewriteWithLlm, enhancePrompt } from 'dsh-prompt-enhancer';
 | `locale` | `auto` | 改写指令语言与按钮文案 |
 | `provider` / `model` | 空 | 改写路由；留空跟随当前会话/agent 路由 |
 | `maxTokens` | `2048` | 单次改写输出 token 上限（256–16384） |
-| `timeoutMs` | `20000` | 改写超时（1000–120000） |
+| `timeoutMs` | `120000` | 改写超时（1000–300000）；DeepSeek-V4-Pro 等推理模型可能需要较长首 token 时间 |
 | `maxPromptChars` | `12000` | 输入超过此长度拒发模型、保留原文 |
 | `includeRisks` | `true` | 敏感线索提示 |
 

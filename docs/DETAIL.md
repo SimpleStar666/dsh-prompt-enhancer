@@ -16,11 +16,11 @@ v0.1 的固定五段模板伪造缺失；v0.2 的本地规则诚实但朴素。v
   system: buildMetaPrompt(...),   // 改写规则 + 本地证据
   messages: [{ role: 'user', content: [{ type: 'text', text: raw }] }],
   purpose: 'prompt-enhancer',      // 单独计量，不进会话历史
-  signal: AbortSignal.timeout(timeoutMs),
+  signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]),
 }
 ```
 
-流块协议：`text-delta` 累加；`reasoning-delta` 丢弃；`usage` 忽略；终末 `finish.reason.kind` 为 `stop`/`max-tokens`/`aborted`/`error`。`error`/`aborted`/空文本的 `max-tokens` 抛错；流未结束即断流视为失败。所有失败 fail-open：保留原文、tooltip 说明，绝不阻塞。
+流块协议：`text-delta` 累加；`reasoning-delta` 丢弃；`usage` 忽略；终末 `finish.reason.kind` 为 `stop`/`max-tokens`/`aborted`/`error`。`error`/`aborted`/空文本的 `max-tokens` 抛错；流未结束即断流视为失败。插件默认总超时从 20 秒提高到 120 秒，避免推理模型尚未吐出首 token 就被误取消；超时会明确显示 `timed out`，而不是伪装成用户取消。浏览器断开请求时也会把 `request.signal` 传入模型。所有失败 fail-open：保留原文、tooltip 说明，绝不阻塞。
 
 改写元提示词（`src/rewrite.mjs`）要求：保留原意/语言/全部具体事实；不发明技术栈/路径/数字；不回答、不反问、不写前言；未知细节用内联默认或条件要求补齐；仅输出改写文本。本地证据（目标、交付物、环境、已列范围、约束、格式、验收）以“已表达，视为既定”列出；本地澄清建议转成“用默认/条件补齐，禁止再问”。
 
