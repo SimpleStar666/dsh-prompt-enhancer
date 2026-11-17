@@ -1,21 +1,26 @@
 /**
  * Model-based prompt rewrite for dsh-prompt-enhancer.
  *
- * Local intent evidence (src/intent.mjs) is shown to the model so it treats
- * already-expressed facts as given and never asks the user about them again.
  * All wire behaviour (llm.stream chunk kinds, finish reasons) follows the
  * @deepseek-ai/dsh-llm service contract; see docs/DETAIL.md.
+ *
+ * Style (v0.3.5): the meta-prompt mirrors the two reference enhancers'
+ * instruction sets — short rules, expand with capabilities general to the
+ * task kind, defer situational specifics to the agent, one flowing paragraph.
+ * Local intent evidence (src/intent.mjs) is no longer injected into the
+ * rewrite request: labelled evidence lines taught the model to answer with
+ * 目标/背景/约束-style label blocks, which is exactly the over-structured
+ * output style users compared unfavorably against the references. The local
+ * analysis still powers the response metadata (recognizedFacts, riskFlags).
  *
  * Latency design (v0.3.3): the enhancement must not pay the conversation's
  * full reasoning bill. When the caller does not pin a reasoning effort, the
  * rewrite resolves the exact route's advertised efforts through the official
- * capability seam (`llm.resolveCallConfig` / `llm.prepareCall`) and picks the
- * lowest supported one (`minimal` → `low` → `off`), falling back to the
- * route's own default when nothing is discoverable. The sent effort and the
- * stream timing are recorded for the API response.
+ * capability seam (`llm.prepareCall`) and picks the lowest supported one
+ * (`minimal` → `low` → `off`), falling back to the route's own default when
+ * nothing is discoverable. The sent effort and the stream timing are recorded
+ * for the API response.
  */
-
-import { analyzeIntent } from './intent.mjs';
 
 export const REWRITE_DEFAULTS = Object.freeze({
   /**
@@ -58,43 +63,44 @@ const AUTO_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'off', 'medium']);
  */
 
 /**
- * Build the rewrite meta-prompt from the raw draft plus local evidence.
+ * Build the rewrite meta-prompt.
  *
- * v0.3.4 deliberately mirrors the concise house style of the reference
- * enhancers: one or two flowing paragraphs, concrete scope that follows from
- * the draft, no section headings and no invented platform/tech-stack
- * defaults. The local evidence list only stops the model from re-asking what
- * was already said; it removes the old "clarifications" section that pushed
- * the model to pad the rewrite with invented requirements.
- * @param {{raw: string, locale: 'zh'|'en'|'auto'}} input
+ * v0.3.5 aligns the instruction set with the two reference enhancers that the
+ * user compared against (AntMan-xtalgh's short SYSTEM_PROMPT and saul-dsh's
+ * BASE_RULES) after finding why ours read differently:
+ *   1. They never inject locally-extracted labelled evidence — such lines
+ *      teach the model to imitate the label format (our 目标/背景/约束 output).
+ *   2. Their missing-info policy is "expand with capabilities general to the
+ *      task kind; defer situational choices to the agent" — not "invent
+ *      defaults with a (默认：…) disclaimer, and never elaborate".
+ *   3. Their prompt is one short paragraph of rules, not a long clause list.
+ * The draft travels as the single user message (see rewriteWithLlm).
+ * @param {{locale: 'zh'|'en'|'auto'}} input
  * @returns {string}
  */
-export function buildMetaPrompt({ raw, locale = 'auto' }) {
-  const lang = locale === 'zh' || locale === 'en' ? locale : (/[\u3400-\u9fff]/.test(raw) ? 'zh' : 'en');
-  const analysis = analyzeIntent(raw, lang, 'general');
+export function buildMetaPrompt({ locale = 'auto' }) {
   const lines = [
-    'Rewrite the user\'s rough draft into one clearer, more specific prompt for an AI agent that can read files, run commands, browse the web and write code.',
+    'You rewrite a user\'s rough draft into a better prompt for an AI agent that can read files, run commands and write code. You are rewriting a request, never answering it.',
     '',
-    'RULES:',
-    '- Keep the user\'s intent, language and every concrete detail: names, paths, numbers, error text, URLs, options.',
-    '- Fix typos and fragments; make the goal explicit and the ask actionable.',
-    '- Write flowing prose: one or two short paragraphs, or a compact list only when the draft is clearly multi-part. Do NOT add section headings or "Goal:/Context:/Constraints:" labels.',
-    '- Never invent facts the user did not provide: no specific platform, tech stack, product, version or file path. You MAY add the concrete scope such a request normally needs (what the tool should let the user adjust, preview or save), phrased as requirements inside the request.',
-    '- This is a request, not an answer: no explanation of how to do it, no preamble, no code fences.',
-    '- Do NOT ask the user any questions or for confirmation; the rewritten prompt must be executable as-is. Handle a missing detail with a natural inline default or a conditional phrase instead of a question.',
-    '- Be as short as the task allows, but make the goal, the concrete capabilities and the expected result explicit. Never pad with prompt-engineering boilerplate, role-play scaffolding or restated instructions.',
-    '- OUTPUT: only the rewritten prompt text.',
+    'Rules:',
+    '- Preserve the user\'s intent, language and every concrete detail (names, paths, numbers, error text, URLs, options). What the draft already states is settled; do not treat it as missing.',
+    '- Fix typos and garbled text; turn fragments into complete sentences; make the goal explicit: what to do, on what, and what done looks like.',
+    '- Expand with the capabilities, options and constraints such a task normally involves — what a competent engineer would need decided anyway (adjustable parameters, presets, preview, persistence, error handling, acceptance behaviour). These are general to the kind of task, not invented user requirements.',
+    '- For situational specifics the user did not give (target platform, tech stack, exact file names), do NOT pick one, do NOT add disclaimers, and do NOT ask the user: make clarifying or deciding it an explicit step inside the request ("明确插件的目标平台与适用范围"), or phrase it conditionally.',
+    '- Output as one flowing paragraph (two at most) in the draft\'s own language. No section headings, no 目标/背景/约束-style labels, no bullet lists unless the draft is clearly multi-part, no markdown of any kind, no preamble, no code fences.',
+    '- Reply with the rewritten prompt only. Be concise and specific.',
   ];
-  const facts = analysis.recognizedFacts.slice(0, 5);
-  if (facts.length > 0) {
-    lines.push('', 'Already expressed in the draft — treat as given, never ask about it again:');
-    for (const fact of facts) lines.push(`- ${fact.label}：${fact.evidence.replace(/\s*\n\s*/g, ' ')}`);
-  }
-  lines.push('', 'The raw draft is the single user message below. Rewrite it; do not answer it.');
+  if (locale === 'zh') lines.push('- OVERRIDE: write the rewritten prompt in Simplified Chinese.');
+  else if (locale === 'en') lines.push('- OVERRIDE: write the rewritten prompt in English.');
   return lines.join('\n');
 }
 
-/** Strip common model-output wrappers so the result lands cleanly in the composer. */
+/**
+ * Strip common model-output wrappers so the result lands cleanly in the
+ * composer. The composer is plain text, so leaked markdown is noise: strip
+ * heading marks, bold markers and normalize bullets the way the reference
+ * enhancer does (saul-dsh cleanModelOutput) as a last-line guard.
+ */
 export function cleanModelOutput(value) {
   let out = String(value ?? '').trim();
   const fence = out.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n?```$/);
@@ -102,7 +108,11 @@ export function cleanModelOutput(value) {
   out = out.replace(/^(?:enhanced prompt|提示词增强|增强后的提示词|改写后(?:的提示词)?)\s*[:：]\s*/i, '');
   const quoted = out.match(/^"([\s\S]*)"$|^“([\s\S]*)”$|^「([\s\S]*)」$/);
   if (quoted) out = (quoted[1] ?? quoted[2] ?? quoted[3]).trim();
-  return out;
+  out = out
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/^(\s*)[-*]\s+/gm, '$1· ');
+  return out.trim();
 }
 
 /**
@@ -284,10 +294,10 @@ export async function rewriteWithLlm(llm, route, raw, settings = {}) {
     provider: route.provider,
     model: route.model,
     maxTokens: config.maxTokens,
-    // Official dsh-llm one-shot shape: rules go in the `system` field, the draft
-    // stays the single user message so providers that only read the first
-    // system block still receive the instructions.
-    system: buildMetaPrompt({ raw, locale: config.locale ?? 'auto' }),
+    // Official dsh-llm one-shot shape: the short rules go in the `system`
+    // field and the draft travels once, as the single user message — the
+    // reference request shapes (AntMan SYSTEM_PROMPT, saul buildMetaPrompt).
+    system: buildMetaPrompt({ locale: config.locale ?? 'auto' }),
     messages: [
       { role: 'user', content: [{ type: 'text', text: raw }] },
     ],

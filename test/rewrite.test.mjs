@@ -48,39 +48,36 @@ function capableLlm(efforts, { text = '增强后的提示词' } = {}) {
   return llm;
 }
 
-test('meta prompt sets a concise house style and never invents facts from local evidence', () => {
-  const prompt = '我想做一个美化dsh交互界面的插件';
-  const meta = buildMetaPrompt({ raw: prompt, locale: 'auto' });
-  assert.match(meta, /flowing prose/, 'the rewrite must prefer paragraphs over section labels');
-  assert.doesNotMatch(meta, /Add light structure|SUGGESTED CLARIFICATIONS|fold the gap/, 'no section-label homework or clarification padding');
-  assert.ok(meta.includes('插件'), 'evidence should quote the recognized deliverable');
-  assert.ok(meta.includes('dsh'));
-  assert.match(meta, /OUTPUT: only the rewritten prompt text/);
-  assert.doesNotMatch(meta, /React|Tailwind|CSS 注入|Manifest/, 'no invented tech stack or platform');
-  assert.match(meta, /single user message/, 'the draft travels once, as the user message');
+test('meta prompt teaches the flowing-paragraph house style without local-label contamination', () => {
+  const meta = buildMetaPrompt({ raw: '我想做一个美化dsh交互界面的插件', locale: 'auto' });
+  assert.match(meta, /flowing paragraph/, 'the rewrite must prefer paragraphs');
+  assert.match(meta, /capabilities, options and constraints such a task normally involves/, 'general-scope expansion is the reference behaviour');
+  assert.match(meta, /do NOT pick one, do NOT add disclaimers/);
+  assert.match(meta, /明确插件的目标平台与适用范围/, 'the situational-defer example shows the expected phrasing');
+  assert.doesNotMatch(meta, /Add light structure|SUGGESTED CLARIFICATIONS|已表达事实|Already expressed in the draft/, 'no label-injecting evidence block');
+  assert.doesNotMatch(meta, /我想做/, 'the raw draft never enters the meta prompt');
 });
 
-test('meta prompt quotes the user-enumerated scope instead of asking it back', () => {
-  const prompt = '我想做一个美化用户与dsh的交互界面的插件，美化部分包括交互界面、产出等';
-  const meta = buildMetaPrompt({ raw: prompt, locale: 'auto' });
-  assert.ok(meta.includes('美化部分包括交互界面、产出等'));
-  assert.doesNotMatch(meta, /你最想美化/, 'an enumerated scope must not become a question');
+test('meta prompt locale overrides pin the output language', () => {
+  assert.match(buildMetaPrompt({ locale: 'zh' }), /Simplified Chinese/);
+  assert.match(buildMetaPrompt({ locale: 'en' }), /in English/);
+  assert.doesNotMatch(buildMetaPrompt({ locale: 'auto' }), /OVERRIDE/);
 });
 
 test('meta prompt never turns recognized gaps into questions for the user', () => {
   const meta = buildMetaPrompt({ raw: '美化一下dsh界面', locale: 'auto' });
-  assert.match(meta, /Do NOT ask the user any questions/);
-  assert.match(meta, /executable as-is/);
-  assert.ok(meta.includes('美化') || meta.includes('界面'));
+  assert.match(meta, /do NOT ask the user/);
+  assert.match(meta, /rewritten prompt only/);
 });
 
-test('cleanModelOutput strips fences, quotes and labeled prefixes', () => {
+test('cleanModelOutput strips fences, quotes, labeled prefixes and leaked markdown', () => {
   assert.equal(cleanModelOutput('```\n目标：写报告\n```'), '目标：写报告');
   assert.equal(cleanModelOutput('```markdown\n目标：写报告\n```'), '目标：写报告');
   assert.equal(cleanModelOutput('增强后的提示词：目标：写报告'), '目标：写报告');
   assert.equal(cleanModelOutput('"目标：写报告"'), '目标：写报告');
   assert.equal(cleanModelOutput('“目标：写报告”'), '目标：写报告');
   assert.equal(cleanModelOutput('  目标：写报告  '), '目标：写报告');
+  assert.equal(cleanModelOutput('## 目标\n写**报告**\n- 列点'), '目标\n写报告\n· 列点', 'markdown degrades to plain text');
 });
 
 test('streamText collects only text-delta and surfaces error/aborted/max-tokens finishes', async () => {
@@ -165,7 +162,7 @@ test('rewriteWithLlm builds a valid dsh-llm request and guards runaway output', 
   assert.deepEqual(request.model, 'deepseek-chat');
   assert.equal(request.maxTokens, REWRITE_DEFAULTS.maxTokens);
   assert.equal(request.purpose, 'prompt-enhancer');
-  assert.equal(request.system, buildMetaPrompt({ raw, locale: 'zh' }));
+  assert.equal(request.system, buildMetaPrompt({ locale: 'zh' }));
   assert.doesNotMatch(request.system, /<original_prompt>/, 'the draft is not re-embedded as a second system block');
   assert.equal(request.messages.length, 1);
   assert.deepEqual(request.messages[0].content, [{ type: 'text', text: raw }]);

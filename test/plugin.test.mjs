@@ -100,7 +100,7 @@ test('POST enhance rewrites through llm.stream with a valid dsh-llm request', as
   assert.equal(call.model, 'deepseek-chat');
   assert.equal(call.purpose, 'prompt-enhancer');
   assert.equal(typeof call.system, 'string');
-  assert.match(call.system, /写个周报/);
+  assert.doesNotMatch(call.system, /写个周报/, 'the draft travels once, as the user message');
   assert.equal(call.messages.length, 1);
   assert.equal(call.messages[0].role, 'user');
   assert.deepEqual(call.messages[0].content, [{ type: 'text', text: '写个周报' }]);
