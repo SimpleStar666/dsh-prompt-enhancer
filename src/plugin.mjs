@@ -10,11 +10,11 @@
  * route still boots; requests then fail with an honest status instead.
  */
 
-import { Config, DEFAULTS, normalizeConfig } from './schema.mjs';
+import { Config, DEFAULTS, REASONING_EFFORTS, normalizeConfig } from './schema.mjs';
 import { enhancePrompt, detectGaps, normalizeText, containsSensitiveData } from './enhancer.mjs';
-import { rewriteWithLlm } from './rewrite.mjs';
+import { rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS } from './rewrite.mjs';
 
-export { Config, DEFAULTS, normalizeConfig, enhancePrompt, detectGaps, normalizeText, containsSensitiveData, rewriteWithLlm };
+export { Config, DEFAULTS, REASONING_EFFORTS, normalizeConfig, enhancePrompt, detectGaps, normalizeText, containsSensitiveData, rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS };
 
 export const name = 'dsh-prompt-enhancer';
 /** `connection` is optional in practice; apply() also works in headless hosts. */
@@ -229,11 +229,14 @@ export function apply(ctx, rawConfig) {
           return jsonResponse({ ...fallbackResult(prompt, new Error('没有可用的模型路由；请发送一条消息后再试，或在插件配置里指定 provider/model。')), config: effectiveConfig }, 409);
         }
         try {
+          const metrics = {};
           const enhanced = await rewriteWithLlm(state.llm, route, prompt, {
             locale: effectiveConfig.locale,
             maxTokens: effectiveConfig.maxTokens,
             timeoutMs: effectiveConfig.timeoutMs,
-             signal: request?.signal,
+            reasoningEffort: effectiveConfig.reasoningEffort,
+            metrics,
+            signal: request?.signal,
           });
           if (route === lastRoute || (!config.provider && !config.model)) lastRoute = route;
           const local = enhancePrompt(prompt, effectiveConfig);
@@ -242,6 +245,14 @@ export function apply(ctx, rawConfig) {
             enhancedPrompt: enhanced,
             originalPrompt: prompt,
             route,
+            metrics: {
+              totalMs: metrics.totalMs ?? null,
+              ...(metrics.reasoningMs === undefined ? {} : { reasoningMs: metrics.reasoningMs }),
+              ...(metrics.textMs === undefined ? {} : { textMs: metrics.textMs }),
+              reasoningEffort: metrics.reasoningEffort ?? null,
+              maxTokens: metrics.maxTokens ?? effectiveConfig.maxTokens,
+              warnings: metrics.warnings ?? [],
+            },
             changeSet: [],
             assumptions: [],
             missingQuestions: [],

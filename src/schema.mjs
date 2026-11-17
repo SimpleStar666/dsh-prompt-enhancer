@@ -15,9 +15,11 @@ export const DEFAULTS = Object.freeze({
   /** Model id used for the rewrite; empty = follow the session/agent route. */
   model: '',
   /** Max output tokens for the rewrite call. */
-  maxTokens: 2048,
+  maxTokens: 1024,
   /** Rewrite timeout in milliseconds; reasoning models may need a long first-token window. */
   timeoutMs: 120000,
+  /** Reasoning effort for the rewrite: `auto` picks the cheapest supported effort. */
+  reasoningEffort: 'auto',
   /** Inputs longer than this are refused by the rewrite endpoint (still shown locally). */
   maxPromptChars: 12000,
   /** Include safety/ambiguity warnings in the returned metadata. */
@@ -32,7 +34,11 @@ export const DEFAULTS = Object.freeze({
 
 const BOOLEAN_KEYS = ['enabled', 'includeRisks', 'addSectionLabels', 'includeAssumptions', 'includeQuestions'];
 const NUMBER_KEYS = ['maxPromptChars', 'maxTokens', 'timeoutMs', 'order'];
-const STRING_KEYS = ['provider', 'model'];
+const STRING_KEYS = ['provider', 'model', 'reasoningEffort'];
+
+export const REASONING_EFFORTS = Object.freeze([
+  'auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+]);
 
 /**
  * Normalize untrusted plugin configuration.
@@ -57,6 +63,9 @@ export function normalizeConfig(raw) {
   }
   if (source.locale === 'auto' || source.locale === 'zh' || source.locale === 'en') {
     out.locale = source.locale;
+  }
+  if (REASONING_EFFORTS.includes(out.reasoningEffort) === false) {
+    out.reasoningEffort = DEFAULTS.reasoningEffort;
   }
 
   out.maxPromptChars = Math.max(1, Math.min(100_000, Math.trunc(out.maxPromptChars)));

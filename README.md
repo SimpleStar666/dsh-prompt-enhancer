@@ -1,15 +1,16 @@
 # dsh-prompt-enhancer
 
-**提示词增强 v0.3.2**：DSH 输入框里的一键增强按钮 ✨。点击一次，当前草稿经 DSH 已配置的模型改写后回填输入框，供你审阅后再发送；再点一次撤销，恢复精确原文。**从不自动发送。**
+**提示词增强 v0.3.3**：DSH 输入框里的一键增强按钮 ✨。点击一次，当前草稿经 DSH 已配置的模型改写后回填输入框，供你审阅后再发送；再点一次撤销，恢复精确原文。**从不自动发送。**
 
 ## 为什么是 v0.3
 
 v0.1 的固定五段模板是“睁眼说瞎话”；v0.2 的本地规则只贴原文证据、体验朴素。v0.3 重构为与主流提示词增强一致的一键模型改写（参考 [AntMan-xtalgh/dsh-prompt-enhance](https://github.com/AntMan-xtalgh/dsh-prompt-enhance)、[saul-dsh/dsh-prompt-enhancer](https://github.com/saul-dsh/dsh-prompt-enhancer) 等同类项目），同时保留 v0.2 的证据优先内核：
 
 - **模型改写**：通过 DSH 官方 `ctx.llm.stream()` 服务调用已配置模型（`@deepseek-ai/dsh-llm`），无需自己填 API key，无需额外依赖。
+- **快而不贵（v0.3.3）**：增强默认走该模型**最低受支持的推理档位**（`auto` → 按 `minimal → low → off` 探测，经 `llm.prepareCall` 能力接缝精确解析），输出预算 2048 → 1024 token。对话里高推理档「先想几十秒再吐字」的等待不会再落到增强按钮上；可在配置里用 `reasoningEffort` 显式指定档位。
 - **本地证据喂给模型**：改写前用本地规则提取原文线索（目标、交付物、环境、已列范围等），作为“已表达事实”写入改写指令，模型不会把你的范围反问回来，也不把已说过的当缺失。
 - **一键交互**：输入框 ✨ → 点击 → 转圈 → 增强稿回填 → 审阅 → 发送。再点 ✨ 撤销恢复原文；你在草稿里手动改过后，撤销自动失效，绝不覆盖你的修改。
-- **诚实边界**：失败（无模型路由、超时、模型报错、输出失控）一律保留原文并在按钮 tooltip 说明原因，绝不阻塞发送。改写调用带 `purpose` 标记、不进会话历史。
+- **诚实边界**：失败（无模型路由、超时、模型报错、输出失控）一律保留原文并在按钮 tooltip 说明原因，绝不阻塞发送。改写调用带 `purpose` 标记、不进会话历史；响应带 `metrics`（总耗时/首 token 耗时/实际档位）。
 - 不调用第三方免费通道、不读历史、不上传遥测、不持久化输入、不自动回填发送。
 
 ## 安装与升级
@@ -35,7 +36,8 @@ import { rewriteWithLlm, enhancePrompt } from 'dsh-prompt-enhancer';
 | `enabled` | `true` | 关闭后停用增强，保留原文 |
 | `locale` | `auto` | 改写指令语言与按钮文案 |
 | `provider` / `model` | 空 | 改写路由；留空跟随当前会话/agent 路由 |
-| `maxTokens` | `2048` | 单次改写输出 token 上限（256–16384） |
+| `reasoningEffort` | `auto` | 改写推理档位；`auto` 自动选最低受支持档（minimal→low→off），或显式 `off/minimal/low/medium/high/xhigh/max` |
+| `maxTokens` | `1024` | 单次改写输出 token 上限（256–16384） |
 | `timeoutMs` | `120000` | 改写超时（1000–300000）；DeepSeek-V4-Pro 等推理模型可能需要较长首 token 时间 |
 | `maxPromptChars` | `12000` | 输入超过此长度拒发模型、保留原文 |
 | `includeRisks` | `true` | 敏感线索提示 |

@@ -92,6 +92,7 @@ test('POST enhance rewrites through llm.stream with a valid dsh-llm request', as
   assert.equal(result.enhancedPrompt, '写一份给团队看的项目周报，覆盖本周进展、风险与下周计划。');
   assert.equal(result.originalPrompt, '写个周报');
   assert.deepEqual(result.route, { provider: 'deepseek-official', model: 'deepseek-chat' });
+  assert.ok(Array.isArray(result.metrics?.warnings), 'rewrite metrics are exposed for observability');
   assert.ok(Array.isArray(result.reviewNotes) && result.reviewNotes.length > 0);
   assert.equal(llm.calls.length, 1);
   const call = llm.calls[0];
@@ -188,16 +189,18 @@ test('GET and POST config routes expose and update normalized configuration', as
   assert.equal(initial.config.locale, 'zh');
   assert.equal(initial.config.provider, '');
   assert.equal(initial.config.model, '');
-  assert.equal(initial.config.maxTokens, 2048);
+  assert.equal(initial.config.maxTokens, 1024);
+  assert.equal(initial.config.reasoningEffort, 'auto');
 
   const updated = await responseBody(await configRoute.fetch(request(CONFIG_PATH, 'POST', {
-    config: { locale: 'en', maxPromptChars: 256, maxTokens: 1, timeoutMs: 1 },
+    config: { locale: 'en', maxPromptChars: 256, maxTokens: 1, timeoutMs: 1, reasoningEffort: 'fast' },
   })));
   assert.equal(updated.ok, true);
   assert.equal(updated.config.locale, 'en');
   assert.equal(updated.config.maxPromptChars, 256);
   assert.equal(updated.config.maxTokens, 256, 'maxTokens clamps to its floor');
   assert.equal(updated.config.timeoutMs, 1000, 'timeoutMs clamps to its floor');
+  assert.equal(updated.config.reasoningEffort, 'auto', 'unknown effort ids fall back to auto');
 
   const after = await responseBody(await configRoute.fetch(request(CONFIG_PATH)));
   assert.deepEqual(after.config, updated.config);

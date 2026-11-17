@@ -13,14 +13,23 @@ v0.1 的固定五段模板伪造缺失；v0.2 的本地规则诚实但朴素。v
 ```js
 {
   provider, model, maxTokens,
-  system: buildMetaPrompt(...),   // 改写规则 + 本地证据
+  reasoningEffort,                  // v0.3.3：auto 时自动选最低可用档位
+  system: buildMetaPrompt(...),     // 改写规则 + 本地证据
   messages: [{ role: 'user', content: [{ type: 'text', text: raw }] }],
-  purpose: 'prompt-enhancer',      // 单独计量，不进会话历史
+  purpose: 'prompt-enhancer',       // 单独计量，不进会话历史
   signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]),
 }
 ```
 
-流块协议：`text-delta` 累加；`reasoning-delta` 丢弃；`usage` 忽略；终末 `finish.reason.kind` 为 `stop`/`max-tokens`/`aborted`/`error`。`error`/`aborted`/空文本的 `max-tokens` 抛错；流未结束即断流视为失败。插件默认总超时从 20 秒提高到 120 秒，避免推理模型尚未吐出首 token 就被误取消；超时会明确显示 `timed out`，而不是伪装成用户取消。浏览器断开请求时也会把 `request.signal` 传入模型。所有失败 fail-open：保留原文、tooltip 说明，绝不阻塞。
+**推理档位与首 token 延迟（v0.3.3 性能路径）**：v0.3.2 及之前不传 `reasoningEffort`，dsh-llm 会落回 provider/模型自身的默认推理档（运行时证据：`dsh-llm-pi-ai` 的 `options.reasoningEffort ?? profile.reasoning`，推理模型的 `thinking_*` 事件以 `reasoning-delta` 在文本前流式输出）。对话默认档（如 high）下模型先“思考”几十秒才吐文本——这正是「增强要等很久」的根因，与参考插件对比也解释得通。v0.3.3 修复：
+
+- **自动最省档位**：`reasoningEffort: 'auto'`（默认）时，通过官方能力接缝 `llm.prepareCall(config, signal, configure)` 同步捕获精确模型元数据（`reasoning.efforts` 与 `defaultEffort`），按 `minimal → low → off → medium` 顺序选**最低受支持**的档位，并返回绑定该配置的 `stream` 直接派发（`prepareCall` 的 `stream` 会校验最终请求与已解析配置一致）。
+- **显式档位**：配置 `off/minimal/low/medium/high/xhigh/max` 时按字面发送；模型不支持则逐个降级，全部被拒则退回路由默认（fail-open，绝不因档位探测阻塞增强）。
+- **无接缝回退**：宿主没有 `prepareCall` 时，显式档位透传、`auto` 省略字段由路由默认决定——行为与 v0.3.2 一致。
+- **输出预算**：`maxTokens` 默认 2048 → **1024**（改写输出一般几百 token，同时约束生成时长）。
+- **可观测**：响应新增 `metrics`（`totalMs`、`textMs`、`reasoningMs`、`reasoningEffort`、`maxTokens`、`warnings`），首文本/首推理耗时一眼可查；tooltip 在超时时同时提示「可尝试降低推理档位」。
+
+流块协议：`text-delta` 累加；`reasoning-delta` 丢弃（但记录首推理耗时）；`usage` 忽略；终末 `finish.reason.kind` 为 `stop`/`max-tokens`/`aborted`/`error`。`error`/`aborted`/空文本的 `max-tokens` 抛错；流未结束即断流视为失败。插件默认总超时 120 秒，避免推理模型尚未吐出首 token 就被误取消；超时会明确显示 `timed out`，而不是伪装成用户取消。浏览器断开请求时也会把 `request.signal` 传入模型。所有失败 fail-open：保留原文、tooltip 说明，绝不阻塞。
 
 改写元提示词（`src/rewrite.mjs`）要求：保留原意/语言/全部具体事实；不发明技术栈/路径/数字；不回答、不反问、不写前言；未知细节用内联默认或条件要求补齐；仅输出改写文本。本地证据（目标、交付物、环境、已列范围、约束、格式、验收）以“已表达，视为既定”列出；本地澄清建议转成“用默认/条件补齐，禁止再问”。
 
@@ -60,4 +69,4 @@ v0.2 的 `enhancePrompt` / `detectGaps` / `normalizeText` / `containsSensitiveDa
 
 ## 验证边界
 
-77 项测试 + 13 项契约检查覆盖：证据提取回归（含真实用户案例与对抗反例）、改写协议、路由优先级、错误码、按钮状态机、真实 pack/解包。**不代表真实模型输出质量或真实页面 E2E**；v0.3 的模型调用尚未在真实 DSH 页面端到端验收。安装与启用状态以插件管理工具结果为准。
+88 项测试 + 13 项契约检查覆盖：证据提取回归（含真实用户案例与对抗反例）、改写协议（含推理档位选择、首 token 计时、超时/取消区分）、路由优先级、错误码、按钮状态机、真实 pack/解包。**不代表真实模型输出质量或真实页面 E2E**；v0.3 的模型调用尚未在真实 DSH 页面端到端验收。安装与启用状态以插件管理工具结果为准。

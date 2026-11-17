@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildMetaPrompt, cleanModelOutput, streamText, rewriteWithLlm, REWRITE_DEFAULTS } from '../src/rewrite.mjs';
+import { buildMetaPrompt, cleanModelOutput, streamText, rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS, REASONING_EFFORTS } from '../src/rewrite.mjs';
 
 function mockLlm(texts, chunks = null) {
   const calls = [];
@@ -17,6 +17,33 @@ function mockLlm(texts, chunks = null) {
       values.push({ type: 'finish', reason: { kind: 'stop' } });
       return (async function* () { for (const value of values) yield value; })();
     },
+  };
+  return llm;
+}
+
+/** Capability seam shaped like the runtime's LlmRuntime.prepareCall. */
+function capableLlm(efforts, { text = '增强后的提示词' } = {}) {
+  const llm = mockLlm([text]);
+  llm.prepareCall = async (config, signal, configure) => {
+    const info = efforts === null
+      ? {}
+      : { reasoning: { efforts: efforts.map((id) => ({ id })) } };
+    if (configure) {
+      const controls = configure({}, info) ?? {};
+      config = { ...config, ...controls };
+    }
+    if (efforts !== null && config.reasoningEffort !== undefined && !efforts.includes(config.reasoningEffort)) {
+      const error = new Error(`model does not support reasoning effort "${config.reasoningEffort}"`);
+      error.code = 'UNSUPPORTED_REASONING_EFFORT';
+      throw error;
+    }
+    return {
+      config: { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort },
+      stream: () => (async function* () {
+        yield { type: 'text-delta', text };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      })(),
+    };
   };
   return llm;
 }
@@ -64,6 +91,67 @@ test('streamText collects only text-delta and surfaces error/aborted/max-tokens 
   await assert.rejects(streamText({ stream: () => (async function* () { yield { type: 'text-delta', text: 'x' }; })() }, {}), /ended before finishing/);
 });
 
+test('streamText reports first reasoning and first text timings', async () => {
+  const llm = mockLlm([
+    { type: 'reasoning-delta', text: '想' },
+    { type: 'reasoning-delta', text: '想' },
+    '结果',
+  ]);
+  const timing = {};
+  await streamText(llm, {}, {
+    onFirstReasoning: (ms) => { timing.reasoningMs = ms; },
+    onFirstText: (ms) => { timing.textMs = ms; },
+  });
+  assert.equal(typeof timing.reasoningMs, 'number');
+  assert.equal(typeof timing.textMs, 'number');
+  assert.ok(timing.textMs >= timing.reasoningMs, 'text follows reasoning in the stream');
+});
+
+test('resolveReasoningEffort picks the cheapest supported effort via prepareCall', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const capable = capableLlm(['off', 'minimal', 'low', 'medium', 'high']);
+  const result = await resolveReasoningEffort(capable, route, 'auto', 1024, undefined);
+  assert.equal(result.effort, 'minimal', 'minimal is cheaper than low and beats off');
+  assert.equal(typeof result.dispatch, 'function', 'a prepared dispatch must be returned');
+  assert.equal(result.warnings.length, 0);
+});
+
+test('resolveReasoningEffort degrades to low when minimal is absent', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const capable = capableLlm(['off', 'low', 'medium', 'high']);
+  const result = await resolveReasoningEffort(capable, route, 'auto', 1024, undefined);
+  assert.equal(result.effort, 'low');
+});
+
+test('resolveReasoningEffort honors an explicit effort and validates it', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const capable = capableLlm(['low', 'medium', 'high']);
+  assert.equal((await resolveReasoningEffort(capable, route, 'low', 1024, undefined)).effort, 'low');
+
+  // Unsupported explicit effort: every candidate is refused → route default.
+  const strict = capableLlm(['low', 'medium', 'high']);
+  const rejected = await resolveReasoningEffort(strict, route, 'minimal', 1024, undefined);
+  assert.equal(rejected.effort, null, 'refused explicit effort degrades to the route default');
+  assert.ok(rejected.warnings.some((w) => /minimal/.test(w)));
+});
+
+test('resolveReasoningEffort without a capability seam passes explicit through and omits auto', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const plain = mockLlm('x');
+  assert.equal((await resolveReasoningEffort(plain, route, 'low', 1024, undefined)).effort, 'low');
+  const auto = await resolveReasoningEffort(plain, route, 'auto', 1024, undefined);
+  assert.equal(auto.effort, null, 'auto without capabilities leaves the route default');
+  assert.equal(auto.dispatch, null);
+});
+
+test('resolveReasoningEffort falls back when no cheap effort is advertised', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const expensive = capableLlm(['high', 'xhigh', 'max']);
+  const result = await resolveReasoningEffort(expensive, route, 'auto', 1024, undefined);
+  assert.equal(result.effort, null, 'never gamble on an expensive effort');
+  assert.ok(result.warnings.some((w) => /no low-cost/.test(w)));
+});
+
 test('rewriteWithLlm builds a valid dsh-llm request and guards runaway output', async () => {
   const llm = mockLlm(['目标：写报告']);
   const route = { provider: 'deepseek-official', model: 'deepseek-chat' };
@@ -83,6 +171,19 @@ test('rewriteWithLlm builds a valid dsh-llm request and guards runaway output', 
   const long = mockLlm('x'.repeat(5000));
   await assert.rejects(rewriteWithLlm(long, route, raw), /grew beyond/);
   await assert.rejects(rewriteWithLlm(mockLlm('   '), route, raw), /empty/);
+});
+
+test('rewriteWithLlm runs on the cheapest supported effort and reports metrics', async () => {
+  const capable = capableLlm(['off', 'minimal', 'low', 'medium', 'high'], { text: '目标：写报告' });
+  const route = { provider: 'p', model: 'm' };
+  const metrics = {};
+  const enhanced = await rewriteWithLlm(capable, route, '写个报告', { locale: 'zh', metrics });
+  assert.equal(enhanced, '目标：写报告');
+  assert.equal(metrics.reasoningEffort, 'minimal', 'the prepared call must carry the cheapest effort');
+  assert.equal(metrics.maxTokens, REWRITE_DEFAULTS.maxTokens);
+  assert.equal(typeof metrics.totalMs, 'number');
+  assert.equal(typeof metrics.textMs, 'number', 'first text delta is always timed');
+  assert.equal(metrics.reasoningMs, undefined, 'no reasoning deltas in this stream');
 });
 
 test('rewrite distinguishes its deadline from a caller cancellation', async () => {
@@ -105,4 +206,6 @@ test('rewrite defaults are bounded and reproducible', () => {
   assert.ok(REWRITE_DEFAULTS.timeoutMs > 0);
   assert.ok(REWRITE_DEFAULTS.maxOutputChars > 0);
   assert.ok(REWRITE_DEFAULTS.maxOutputRatio > 1);
+  assert.equal(REWRITE_DEFAULTS.maxTokens, 1024, 'the fast path halves the v0.3.2 output budget');
+  assert.deepEqual(REASONING_EFFORTS, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 });
