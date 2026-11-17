@@ -48,14 +48,16 @@ function capableLlm(efforts, { text = '增强后的提示词' } = {}) {
   return llm;
 }
 
-test('meta prompt embeds the raw draft and never invents facts from local evidence', () => {
+test('meta prompt sets a concise house style and never invents facts from local evidence', () => {
   const prompt = '我想做一个美化dsh交互界面的插件';
   const meta = buildMetaPrompt({ raw: prompt, locale: 'auto' });
-  assert.ok(meta.includes('<original_prompt>\n我想做一个美化dsh交互界面的插件\n</original_prompt>'));
+  assert.match(meta, /flowing prose/, 'the rewrite must prefer paragraphs over section labels');
+  assert.doesNotMatch(meta, /Add light structure|SUGGESTED CLARIFICATIONS|fold the gap/, 'no section-label homework or clarification padding');
   assert.ok(meta.includes('插件'), 'evidence should quote the recognized deliverable');
   assert.ok(meta.includes('dsh'));
   assert.match(meta, /OUTPUT: only the rewritten prompt text/);
-  assert.doesNotMatch(meta, /React|Tailwind|CSS 注入/, 'no invented tech stack');
+  assert.doesNotMatch(meta, /React|Tailwind|CSS 注入|Manifest/, 'no invented tech stack or platform');
+  assert.match(meta, /single user message/, 'the draft travels once, as the user message');
 });
 
 test('meta prompt quotes the user-enumerated scope instead of asking it back', () => {
@@ -65,11 +67,11 @@ test('meta prompt quotes the user-enumerated scope instead of asking it back', (
   assert.doesNotMatch(meta, /你最想美化/, 'an enumerated scope must not become a question');
 });
 
-test('meta prompt uses local clarifications as conditional guidance, not questions', () => {
+test('meta prompt never turns recognized gaps into questions for the user', () => {
   const meta = buildMetaPrompt({ raw: '美化一下dsh界面', locale: 'auto' });
-  assert.ok(meta.includes('SUGGESTED CLARIFICATIONS'));
-  assert.ok(meta.includes('never ask them again — fold the gap'), 'clarifications are guidance for the rewrite, not questions');
-  assert.ok(meta.includes('Goal/task') === false, 'auto locale detects CJK and uses Chinese labels');
+  assert.match(meta, /Do NOT ask the user any questions/);
+  assert.match(meta, /executable as-is/);
+  assert.ok(meta.includes('美化') || meta.includes('界面'));
 });
 
 test('cleanModelOutput strips fences, quotes and labeled prefixes', () => {
@@ -164,6 +166,7 @@ test('rewriteWithLlm builds a valid dsh-llm request and guards runaway output', 
   assert.equal(request.maxTokens, REWRITE_DEFAULTS.maxTokens);
   assert.equal(request.purpose, 'prompt-enhancer');
   assert.equal(request.system, buildMetaPrompt({ raw, locale: 'zh' }));
+  assert.doesNotMatch(request.system, /<original_prompt>/, 'the draft is not re-embedded as a second system block');
   assert.equal(request.messages.length, 1);
   assert.deepEqual(request.messages[0].content, [{ type: 'text', text: raw }]);
   assert.ok(request.signal instanceof AbortSignal);
@@ -206,6 +209,6 @@ test('rewrite defaults are bounded and reproducible', () => {
   assert.ok(REWRITE_DEFAULTS.timeoutMs > 0);
   assert.ok(REWRITE_DEFAULTS.maxOutputChars > 0);
   assert.ok(REWRITE_DEFAULTS.maxOutputRatio > 1);
-  assert.equal(REWRITE_DEFAULTS.maxTokens, 1024, 'the fast path halves the v0.3.2 output budget');
+  assert.equal(REWRITE_DEFAULTS.maxTokens, 768, 'v0.3.4 trims the output budget for the concise style');
   assert.deepEqual(REASONING_EFFORTS, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 });

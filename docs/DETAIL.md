@@ -26,12 +26,14 @@ v0.1 的固定五段模板伪造缺失；v0.2 的本地规则诚实但朴素。v
 - **自动最省档位**：`reasoningEffort: 'auto'`（默认）时，通过官方能力接缝 `llm.prepareCall(config, signal, configure)` 同步捕获精确模型元数据（`reasoning.efforts` 与 `defaultEffort`），按 `minimal → low → off → medium` 顺序选**最低受支持**的档位，并返回绑定该配置的 `stream` 直接派发（`prepareCall` 的 `stream` 会校验最终请求与已解析配置一致）。
 - **显式档位**：配置 `off/minimal/low/medium/high/xhigh/max` 时按字面发送；模型不支持则逐个降级，全部被拒则退回路由默认（fail-open，绝不因档位探测阻塞增强）。
 - **无接缝回退**：宿主没有 `prepareCall` 时，显式档位透传、`auto` 省略字段由路由默认决定——行为与 v0.3.2 一致。
-- **输出预算**：`maxTokens` 默认 2048 → **1024**（改写输出一般几百 token，同时约束生成时长）。
+- **输出预算**：`maxTokens` 默认 2048 → **768**（简洁风格几百 token 足够；对“思考与回答共享输出上限”的免费中继，较小上限也会压低思考量）。
+- **请求最小化**：草稿不再同时嵌入 system 与 user 消息；system 只含规则与短证据列表，草稿作为唯一 user 消息发送。
 - **可观测**：响应新增 `metrics`（`totalMs`、`textMs`、`reasoningMs`、`reasoningEffort`、`maxTokens`、`warnings`），首文本/首推理耗时一眼可查；tooltip 在超时时同时提示「可尝试降低推理档位」。
+- **延迟归因**：若增强路由落在免费共享中继（`dsh-our-free-model` 等），其首 token 排队由上游号池决定（该插件自带公告：34–221 秒首 token 来自上游排队），插件无法缩短；需要秒级响应时应在插件配置里把 `provider`/`model` 指向本地代理或官方 API。
 
 流块协议：`text-delta` 累加；`reasoning-delta` 丢弃（但记录首推理耗时）；`usage` 忽略；终末 `finish.reason.kind` 为 `stop`/`max-tokens`/`aborted`/`error`。`error`/`aborted`/空文本的 `max-tokens` 抛错；流未结束即断流视为失败。插件默认总超时 120 秒，避免推理模型尚未吐出首 token 就被误取消；超时会明确显示 `timed out`，而不是伪装成用户取消。浏览器断开请求时也会把 `request.signal` 传入模型。所有失败 fail-open：保留原文、tooltip 说明，绝不阻塞。
 
-改写元提示词（`src/rewrite.mjs`）要求：保留原意/语言/全部具体事实；不发明技术栈/路径/数字；不回答、不反问、不写前言；未知细节用内联默认或条件要求补齐；仅输出改写文本。本地证据（目标、交付物、环境、已列范围、约束、格式、验收）以“已表达，视为既定”列出；本地澄清建议转成“用默认/条件补齐，禁止再问”。
+改写元提示词（`src/rewrite.mjs`）v0.3.4 起采用**简洁流动风格**：保留原意/语言/全部具体事实；把目标、具体能力和预期结果写清楚；写成一两段流畅的请求文字（明显多段任务才用紧凑列表），不套「目标/背景/约束/产出/验收」小标题；不编造平台/技术栈/产品/版本；绝不反问用户，缺失细节用自然的内联默认或条件句补齐；只输出改写文本。v0.3.4 同时移除了旧的“澄清建议”段落（它诱导模型补写编造的需求），并把草稿从 system 提示词中移除（草稿只作为单条 user 消息发送一次，省掉重复的输入 token）。本地证据（目标、交付物、环境等）以“已表达，视为既定”列出，最多 5 条。
 
 守卫：输出清掉代码围栏/引号/标签前缀；空输出失败；长度超过 `max(600, 输入长 × 3.5)` 且封顶 4000 字符视为失控、弃用并保留原文。
 
@@ -50,7 +52,7 @@ v0.1 的固定五段模板伪造缺失；v0.2 的本地规则诚实但朴素。v
 
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
-| `/api/prompt-enhancer/enhance` | POST | 模型改写；成功返回 `{ok, enhancedPrompt, originalPrompt, route, recognizedFacts, reviewNotes, config}`，失败返回原文 + error（200 fail-open；413 超长、409 无路由、503 无 llm） |
+| `/api/prompt-enhancer/enhance` | POST | 模型改写；成功返回 `{ok, enhancedPrompt, originalPrompt, route, metrics, recognizedFacts, reviewNotes, config}`，失败返回原文 + error（200 fail-open；413 超长、409 无路由、503 无 llm） |
 | `/api/prompt-enhancer/route` | POST | 写入本次会话路由提示 `{route:{provider,model}}` |
 | `/api/prompt-enhancer/config` | GET/POST | 运行时配置，仅内存，不持久化 |
 

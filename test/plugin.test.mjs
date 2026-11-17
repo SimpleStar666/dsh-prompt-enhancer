@@ -189,7 +189,7 @@ test('GET and POST config routes expose and update normalized configuration', as
   assert.equal(initial.config.locale, 'zh');
   assert.equal(initial.config.provider, '');
   assert.equal(initial.config.model, '');
-  assert.equal(initial.config.maxTokens, 1024);
+  assert.equal(initial.config.maxTokens, 768);
   assert.equal(initial.config.reasoningEffort, 'auto');
 
   const updated = await responseBody(await configRoute.fetch(request(CONFIG_PATH, 'POST', {

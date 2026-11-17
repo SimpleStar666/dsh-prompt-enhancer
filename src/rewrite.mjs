@@ -19,10 +19,12 @@ import { analyzeIntent } from './intent.mjs';
 
 export const REWRITE_DEFAULTS = Object.freeze({
   /**
-   * A prompt rewrite rarely exceeds a few hundred tokens; a smaller budget
-   * bounds generation time on slow reasoning routes. 2048 was oversized.
+   * A concise rewrite needs a few hundred tokens; on providers whose
+   * thinking shares the output ceiling (e.g. the free relay) a smaller
+   * budget also trims thinking time. 1024 was more than the house style
+   * needs, 2048 clearly oversized.
    */
-  maxTokens: 1024,
+  maxTokens: 768,
   // DeepSeek reasoning models can spend well over 20s before their first token.
   // Keep this below DSH's default 300s idle timeout while avoiding false cancels.
   timeoutMs: 120000,
@@ -57,6 +59,13 @@ const AUTO_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'off', 'medium']);
 
 /**
  * Build the rewrite meta-prompt from the raw draft plus local evidence.
+ *
+ * v0.3.4 deliberately mirrors the concise house style of the reference
+ * enhancers: one or two flowing paragraphs, concrete scope that follows from
+ * the draft, no section headings and no invented platform/tech-stack
+ * defaults. The local evidence list only stops the model from re-asking what
+ * was already said; it removes the old "clarifications" section that pushed
+ * the model to pad the rewrite with invented requirements.
  * @param {{raw: string, locale: 'zh'|'en'|'auto'}} input
  * @returns {string}
  */
@@ -64,32 +73,24 @@ export function buildMetaPrompt({ raw, locale = 'auto' }) {
   const lang = locale === 'zh' || locale === 'en' ? locale : (/[\u3400-\u9fff]/.test(raw) ? 'zh' : 'en');
   const analysis = analyzeIntent(raw, lang, 'general');
   const lines = [
-    'You rewrite a user\'s rough draft into a clear, specific, self-contained, executable prompt for an AI agent that can read files, run commands, browse the web and write code.',
+    'Rewrite the user\'s rough draft into one clearer, more specific prompt for an AI agent that can read files, run commands, browse the web and write code.',
     '',
-    'CORE RULES:',
-    '- Preserve the user\'s original intent, scope and language. You are rewriting a request, not answering it.',
-    '- Keep every concrete detail verbatim: names, paths, numbers, error text, URLs, options.',
-    '- Never fabricate specifics the user did not provide: no invented tech stack, file paths, versions, or requirements.',
-    '- Remove redundancy, fix typos and fragments, and make the ask actionable.',
-    '- Do NOT explain how to do the task, answer the question, or add a preamble like "Here is the enhanced prompt".',
-    '- Do NOT ask the user any questions and do NOT ask for confirmation. If a detail is genuinely unknown, fill it with an inline default marked "(默认：...)" or "(default: ...)", or phrase it as a conditional requirement ("如果需要登录，则...").',
-    '- Add light structure (short labeled lines such as 目标/背景/约束/产出/验收, or Goal/Context/Constraints/Deliverables/Acceptance in English) only when it genuinely helps. Never pad with generic prompt-engineering boilerplate.',
-    '- OUTPUT: only the rewritten prompt text. No commentary, no quotes around it, no code fences around the whole output.',
-    '',
-    'LOCAL EVIDENCE — already expressed in the original draft. Treat these as given; do not treat them as missing and do not ask about them again:',
+    'RULES:',
+    '- Keep the user\'s intent, language and every concrete detail: names, paths, numbers, error text, URLs, options.',
+    '- Fix typos and fragments; make the goal explicit and the ask actionable.',
+    '- Write flowing prose: one or two short paragraphs, or a compact list only when the draft is clearly multi-part. Do NOT add section headings or "Goal:/Context:/Constraints:" labels.',
+    '- Never invent facts the user did not provide: no specific platform, tech stack, product, version or file path. You MAY add the concrete scope such a request normally needs (what the tool should let the user adjust, preview or save), phrased as requirements inside the request.',
+    '- This is a request, not an answer: no explanation of how to do it, no preamble, no code fences.',
+    '- Do NOT ask the user any questions or for confirmation; the rewritten prompt must be executable as-is. Handle a missing detail with a natural inline default or a conditional phrase instead of a question.',
+    '- Be as short as the task allows, but make the goal, the concrete capabilities and the expected result explicit. Never pad with prompt-engineering boilerplate, role-play scaffolding or restated instructions.',
+    '- OUTPUT: only the rewritten prompt text.',
   ];
-  if (analysis.recognizedFacts.length === 0) lines.push('- (none recognized by local rules; the draft alone is your source of truth)');
-  else {
-    for (const fact of analysis.recognizedFacts) lines.push(`- ${fact.label}：${fact.evidence.replace(/\s*\n\s*/g, ' ')}`);
+  const facts = analysis.recognizedFacts.slice(0, 5);
+  if (facts.length > 0) {
+    lines.push('', 'Already expressed in the draft — treat as given, never ask about it again:');
+    for (const fact of facts) lines.push(`- ${fact.label}：${fact.evidence.replace(/\s*\n\s*/g, ' ')}`);
   }
-  if (analysis.clarifications.length > 0) {
-    lines.push(
-      '',
-      'SUGGESTED CLARIFICATIONS from local rules. The user has NOT answered these; never ask them again — fold the gap into the prompt as a default or conditional requirement:',
-    );
-    for (const item of analysis.clarifications) lines.push(`- ${item.question}`);
-  }
-  lines.push('', 'Raw draft:', '<original_prompt>', raw, '</original_prompt>');
+  lines.push('', 'The raw draft is the single user message below. Rewrite it; do not answer it.');
   return lines.join('\n');
 }
 

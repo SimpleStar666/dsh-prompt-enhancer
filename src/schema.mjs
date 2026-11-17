@@ -15,7 +15,7 @@ export const DEFAULTS = Object.freeze({
   /** Model id used for the rewrite; empty = follow the session/agent route. */
   model: '',
   /** Max output tokens for the rewrite call. */
-  maxTokens: 1024,
+  maxTokens: 768,
   /** Rewrite timeout in milliseconds; reasoning models may need a long first-token window. */
   timeoutMs: 120000,
   /** Reasoning effort for the rewrite: `auto` picks the cheapest supported effort. */
