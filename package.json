@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-enhancer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "在 DSH 右侧栏查看原文线索与可选澄清，将真实回答加入草稿；本地规则，不调用模型。",
   "type": "module",
   "private": true,

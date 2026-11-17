@@ -169,6 +169,14 @@ test('unconstrained artifact repetitions do not fabricate a deliverable', () => 
   assert.equal(fact(result, 'deliverable'), undefined);
 });
 
+test('enumerated beautify scope is quoted, not asked back as a question', () => {
+  const prompt = '我想做一个美化用户与dsh的交互界面的插件，美化部分包括交互界面、产出等';
+  const result = enhancePrompt(prompt);
+  checkEvidence(prompt, result);
+  assert.equal(fact(result, 'scope').evidence, '美化部分包括交互界面、产出等');
+  assert.deepEqual(result.clarifications, []);
+});
+
 test('a vague action asks for its object rather than padding a complete checklist', () => {
   const result = enhancePrompt('做个东西');
   assert.ok(fact(result, 'target'));

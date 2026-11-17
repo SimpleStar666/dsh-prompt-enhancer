@@ -3,7 +3,7 @@ const LABELS = {
   target: ['目标/任务', 'Goal/task'], deliverable: ['交付物', 'Deliverable'],
   environment: ['使用环境', 'Environment'], background: ['背景', 'Background'],
   constraints: ['明确约束', 'Explicit constraint'], outputFormat: ['表达格式', 'Response format'],
-  successCriteria: ['验收线索', 'Acceptance signal'],
+  successCriteria: ['验收线索', 'Acceptance signal'], scope: ['已列范围', 'Stated scope'],
 };
 const ACTION = /(?:做|开发|制作|创建|搭建|实现|美化|优化|改善|修复|排查|解决|设计|写|撰写|生成|分析|比较|总结|翻译|解释|整理|评估|安装|重构|改进|迁移|让|给(?:我)?|把.{1,80}(?:改|转|译)|\b(?:build|make|create|develop|implement|beautify|improve|fix|debug|design|write|generate|analy[sz]e|compare|summari[sz]e|translate|explain|review|install|refactor|convert)\b)/i;
 const REQUEST = /^(?:(?:我(?:想|希望|打算|准备|需要)(?:要)?|想要|希望|打算|准备|需要|请你|请|帮我|给我|能否|可否|能不能|可以|麻烦|先|只|仅|再|然后|I\s+(?:want|need|would like)(?:\s+to)?|I['’]d like(?:\s+to)?|please|could you|can you|help me)\s*)+/i;
@@ -15,6 +15,8 @@ const FORMAT = /(?:输出格式|回答格式|返回格式|格式|format)\s*[:：
 const FORMAT_NAME = /Markdown|JSON|CSV|YAML|HTML|PDF|PPTX?|DOCX|纯文本|分点|项目符号|表格|列表|plain text|bullet points?|table|list/i;
 const CONSTRAINT = /必须|不要|禁止|只用|仅用|不(?:得|能|允许|超过|使用|添加|改变|联网)|预算|截止|兼容|依赖|保持|保留|\b(?:must|do not|don't|only use|without|no new|at most|budget|deadline|compatible|preserve|keep)\b/i;
 const ACCEPTANCE = /验收|成功标准|完成条件|测试通过|可以安装|可安装|可运行|\b(?:acceptance|success criteria|definition of done|tests? pass|installable|runnable)\b/i;
+// Parts the user already enumerated; asking which parts again would repeat their words.
+const SCOPE_ENUMERATED = /美化(?:部分|范围|内容|方面)?\s*(?:包括|包含|涉及|涵盖|主要有|分为)|美化[^，,。！？!?;；\n]{0,40}(?:和|与|、|及|以及)\s*(?:产出|输出|输入|对话|侧栏|图标|按钮|菜单|配色|字体|布局|主题)/i;
 
 // Mask code while preserving UTF-16 offsets. Never interpret code samples as intent.
 function proseMask(text) {
@@ -84,6 +86,7 @@ export function analyzeIntent(raw, locale = 'zh', profile = 'general') {
     if (ACCEPTANCE.test(part.text) && !/^(?:验收|验收标准|成功标准|完成条件|acceptance|success criteria|definition of done)\s*[:：]?\s*[.]?$/i.test(part.text)) add('successCriteria', part.start, part.text.length);
     const background = /^(?:背景|现状|目前|现在|已有|项目是|context|background|currently|existing|we already have)\s*[:：]?\s*(.+)/i.exec(part.text);
     if (background && background[1].trim()) add('background', part.start, part.text.length);
+    if (SCOPE_ENUMERATED.test(part.text)) add('scope', part.start, part.text.length);
   }
   // Only report explicitly named environments, not a guessed stack.
   const environment = /\b(?:DSH|DeepSeek Harness|Windows|macOS|Linux|Android|iOS|React|Vue|Node\.js)\b/i.exec(text);
@@ -105,7 +108,7 @@ export function analyzeIntent(raw, locale = 'zh', profile = 'general') {
     ask('reference', zh ? '这里的“这/这个”具体指哪段内容或哪个界面？可提供描述或截图。' : 'What does “this” refer to? A description or screenshot would help.',
       zh ? '任务动作已表达；这里只确认指代对象，不假定它已随输入提供。' : 'The action is explicit; this only checks the referenced material, without assuming it was supplied.',
       /这个|这段|this UI|this interface|this code/i.exec(taskText)?.[0] ?? '');
-  } else if (/(?:美化|好看|beautif|prettier|visual polish|easier on the eyes)/i.test(taskText) && !/方向|建议|可行性|文章|报告|邮件|\b(?:ideas|suggestions|feasibility|article|report|email)\b/i.test(taskText) && !/(?:配色|颜色|字体|间距|圆角|阴影|深色|浅色|布局|侧栏|侧边栏|对话区|输入框|截图|参考|theme|colou?r|font|spacing|radius|dark|light|layout|sidebar|screenshot|reference)/i.test(all)) {
+  } else if (/(?:美化|好看|beautif|prettier|visual polish|easier on the eyes)/i.test(taskText) && !/方向|建议|可行性|文章|报告|邮件|\b(?:ideas|suggestions|feasibility|article|report|email)\b/i.test(taskText) && !/(?:配色|颜色|字体|间距|圆角|阴影|深色|浅色|布局|侧栏|侧边栏|对话区|输入框|截图|参考|theme|colou?r|font|spacing|radius|dark|light|layout|sidebar|screenshot|reference)/i.test(all) && !has('scope')) {
     const ui = /交互界面|界面|交互|\bUI\b|interface/i.exec(taskText)?.[0];
     ask('visual-scope', zh ? `你最想美化${ui ? `“${ui}”的哪些部分` : '哪些部分'}？有没有喜欢的风格或参考图？` : 'Which parts should look different, and do you have a preferred style or reference?',
       zh ? '“美化”已是目标；这只是在确认具体方向，不要求你重新说明目标或交付物。' : 'Visual improvement is already the goal; this only narrows the direction, not the goal or deliverable.',
