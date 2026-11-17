@@ -68,6 +68,9 @@ function fallbackResult(prompt, error) {
     missingQuestions: [],
     riskFlags: ['enhancement_failed'],
     confidence: 0,
+    recognizedFacts: [],
+    clarifications: [],
+    reviewNotes: [],
     error: `提示词增强失败：${error?.message ?? String(error)}`,
   };
 }

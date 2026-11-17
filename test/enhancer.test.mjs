@@ -36,15 +36,16 @@ test('enhancePrompt returns structured result and preserves the original request
   assert.ok(result.enhancedPrompt.length >= prompt.length);
 });
 
-test('enhancement adds actionable gaps/change set without inventing hard constraints', () => {
+test('review preserves constraints without inventing changes or assumptions', () => {
   const prompt = '用中文回答，不要联网。输出不超过 3 条，必须保留原始 JSON 字段。';
   const result = enhancePrompt(prompt, { profile: 'general' });
   assertResultShape(result);
   assert.match(result.enhancedPrompt, /不要联网/);
   assert.match(result.enhancedPrompt, /不超过\s*3\s*条/);
   assert.match(result.enhancedPrompt, /必须保留原始 JSON 字段/);
-  assert.ok(result.changeSet.length >= 0);
-  assert.ok(!result.assumptions.some((a) => /不要联网|必须保留|不超过/.test(String(a))));
+  assert.deepEqual(result.changeSet, []);
+  assert.deepEqual(result.assumptions, []);
+  assert.equal(result.enhancedPrompt, prompt);
 });
 
 test('hard constraints are retained verbatim in enhanced prompt', () => {
@@ -79,7 +80,7 @@ test('containsSensitiveData handles common secrets and ordinary prose', () => {
   }
 });
 
-test('detectGaps identifies missing objective/output/context signals', () => {
+test('legacy detectGaps distinguishes recognized clues from unknown, never semantic absence', () => {
   const gaps = detectGaps('请帮我看看这个问题');
   assert.ok(Array.isArray(gaps));
   assert.ok(gaps.length > 0);
@@ -151,23 +152,17 @@ test('over-budget input is retained entirely, explained, and scanned for tail se
   assert.ok(enhancePrompt('ab', { maxPromptChars: 1 }).riskFlags.includes('enhancement_skipped'));
 });
 
-test('profile-specific guidance remains optional and never fabricates facts', () => {
+test('legacy profile is accepted but never invents a stack, audience, or mandatory sections', () => {
   const prompt = '帮我做个东西';
   const general = enhancePrompt(prompt);
-  for (const [profile, cue] of [['writing', '目标读者'], ['product', '目标用户'], ['coding', '技术栈']]) {
-    const result = enhancePrompt(prompt, { profile });
-    assert.ok(result.enhancedPrompt.startsWith(prompt));
-    assert.ok(result.enhancedPrompt.includes(cue));
-    assert.notEqual(result.enhancedPrompt, general.enhancedPrompt);
-  }
-  for (const profile of ['unknown', null, 123, [], {}, { toString() { throw new Error('no coercion'); } }]) {
+  for (const profile of ['general', 'writing', 'product', 'coding', 'unknown', null, 123, [], {}, { toString() { throw new Error('no coercion'); } }]) {
     assert.deepEqual(enhancePrompt(prompt, { profile, unknown: true }), general);
   }
 });
 
-test('questions are limited to three and metadata/section toggles are respected', () => {
+test('optional questions never pad to a quota and metadata toggles are respected', () => {
   const prompt = '一个想法';
-  assert.equal(enhancePrompt(prompt).missingQuestions.length, 3);
+  assert.equal(enhancePrompt(prompt).missingQuestions.length, 1);
   const result = enhancePrompt(prompt, {
     addSectionLabels: false, includeQuestions: false, includeAssumptions: false, includeRisks: false,
   });
@@ -176,7 +171,7 @@ test('questions are limited to three and metadata/section toggles are respected'
 });
 
 test('complete requests are not expanded and gap detection is only heuristic', () => {
-  const prompt = '目标：写报告。背景：项目回顾。要求：只用资料。输出格式：Markdown。验收标准：可验证。';
+  const prompt = '目标：给团队写报告。背景：项目回顾。要求：只用资料。输出格式：Markdown。验收标准：可验证。';
   const result = enhancePrompt(prompt);
   assert.equal(result.enhancedPrompt, prompt);
   assert.deepEqual(result.changeSet, []);

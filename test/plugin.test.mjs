@@ -168,15 +168,20 @@ test('disabled host preserves original; request override cannot enable it; confi
   await route.fetch(request(CONFIG_PATH, 'POST', { enabled: true }));
   const enabled = await responseBody(await route.fetch(request(ENHANCE_PATH, 'POST', { text: prompt })));
   assert.equal(enabled.config.enabled, true);
-  assert.ok(enabled.enhancedPrompt.length > prompt.length);
+  assert.equal(enabled.enhancedPrompt, prompt);
+  assert.ok(enabled.reviewNotes.length > 0);
+  assert.ok(enabled.clarifications.length > 0);
 });
 
 test('host forwards profiles and per-request toggles without persisting overrides', async () => {
   const { ctx, registrations } = createHost();
   apply(ctx, { locale: 'zh' });
   const route = registrations[0];
-  const coded = await responseBody(await route.fetch(request(ENHANCE_PATH, 'POST', { text: '做个东西', profile: 'coding' })));
-  assert.match(coded.enhancedPrompt, /技术栈/);
+  const coded = await responseBody(await route.fetch(request(ENHANCE_PATH, 'POST', { text: '我想做一个美化dsh交互界面的插件', profile: 'coding' })));
+  assert.equal(coded.enhancedPrompt, '我想做一个美化dsh交互界面的插件');
+  assert.equal(coded.recognizedFacts.find((fact) => fact.key === 'deliverable').evidence, '插件');
+  assert.equal(coded.clarifications[0].id, 'visual-scope');
+  assert.doesNotMatch(coded.missingQuestions.join(' '), /技术栈|React|Tailwind/);
   const plain = await responseBody(await route.fetch(request(ENHANCE_PATH, 'POST', {
     text: '做个东西', config: { addSectionLabels: false, includeQuestions: false },
   })));

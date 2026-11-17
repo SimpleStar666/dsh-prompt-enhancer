@@ -10,11 +10,11 @@ export const DEFAULTS = Object.freeze({
   enabled: true,
   /** `auto`, `zh` or `en`; only affects labels/questions, never the input. */
   locale: 'auto',
-  /** Add explicit section headings and gap markers to the result. */
+  /** Deprecated compatibility switch; never adds a fixed template. */
   addSectionLabels: true,
-  /** Include a non-invention policy reminder in the returned metadata. */
+  /** Deprecated compatibility switch; no assumptions are invented. */
   includeAssumptions: true,
-  /** Include questions for sections that are absent. */
+  /** Include optional, task-related clarifications, not a missing-section checklist. */
   includeQuestions: true,
   /** Include safety/ambiguity warnings in the returned metadata. */
   includeRisks: true,

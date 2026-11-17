@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Idea enhancer",
-    "description": "Enhance rough ideas into clear, actionable prompts in the right sidebar; edit, copy, or undo without auto-sending.",
+    "description": "Review original-text clues and optional clarifications, then add real answers to the draft; local rules, no model calls or auto-sending.",
     "detail": "README.md"
   }
 }
