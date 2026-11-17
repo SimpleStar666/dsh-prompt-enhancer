@@ -287,6 +287,18 @@ test('model failures return the original prompt with the failure explained', asy
   assert.match(result.error, /配额不足/);
 });
 
+test('apply never subscribes to waterfall events that require next()', () => {
+  const events = [];
+  const ctx = {
+    connection: { fetch: { register() { return () => {}; } } },
+    on(name) { events.push(name); },
+  };
+  apply(ctx, { locale: 'zh' });
+  assert.ok(events.includes('agent/created'), 'route learning uses the notification event');
+  assert.ok(!events.includes('agent/pre-step'), 'pre-step is a waterfall: a listener without next() blocks every agent run');
+  assert.ok(!events.includes('llm/stream'), 'llm/stream is a waterfall and must not be subscribed');
+});
+
 test('hosts without a direct llm property use ctx.inject to acquire the service', async () => {
   const registrations = [];
   const nested = [];

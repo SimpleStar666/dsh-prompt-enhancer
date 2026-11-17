@@ -161,11 +161,13 @@ export function apply(ctx, rawConfig) {
   let lastRoute = null;
   try {
     if (typeof ctx?.on === 'function') {
-      ctx.on('agent/created', ({ agent } = {}) => {
-        const route = routeFromAgent(agent);
-        if (route) lastRoute = route;
-      });
-      ctx.on('agent/pre-step', ({ agent } = {}) => {
+      // `agent/created` is a plain notification event: reading the route here
+      // lets the composer button work before the first message is sent.
+      // Deliberately NOT subscribing to waterfall events (`agent/pre-step`,
+      // `llm/stream`): a listener that ignores `next()` blocks the entire agent
+      // loop and breaks every run until the plugin is disabled.
+      ctx.on('agent/created', (payload) => {
+        const agent = payload?.agent ?? payload;
         const route = routeFromAgent(agent);
         if (route) lastRoute = route;
       });

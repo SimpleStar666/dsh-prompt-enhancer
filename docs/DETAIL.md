@@ -30,8 +30,10 @@ v0.1 的固定五段模板伪造缺失；v0.2 的本地规则诚实但朴素。v
 
 1. 插件配置 `provider` + `model`（显式指定）。
 2. 请求体 `route`（客户端/调用方提示）。
-3. `agent/created`、`agent/pre-step` 事件记住的会话路由（`session.requestHeader()?.config` / `requestHeader()?.config` / `options`）。
+3. `agent/created` 通知事件记住的会话路由（`session.requestHeader()?.config` / `requestHeader()?.config` / `options`）。
 4. `ctx.agentDefaultModel.currentSelection()`（全局默认选择，尽力而为）。
+
+**绝不订阅瀑布流事件**（`agent/pre-step`、`llm/stream` 等需要调用 `next()` 的管道）：不调用 `next()` 的监听器会卡死整个 Agent 循环，表现为每次运行都失败、禁用插件后恢复。
 
 全部缺失时返回 409 及可操作的提示，绝不猜测路由。
 
