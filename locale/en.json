@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Idea enhancer",
-    "description": "Review original-text clues and optional clarifications, then add real answers to the draft; local rules, no model calls or auto-sending.",
+    "description": "One-click draft enhancement in the composer: the model rewrites the draft and it is written back for review; undoable, editable, never auto-sent.",
     "detail": "README.md"
   }
 }

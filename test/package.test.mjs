@@ -111,17 +111,17 @@ test('patch checker accepts quoted YAML ids and rejects duplicate or prefixed id
   assert.throws(() => assertPatchContract('- insert:\n    - id: dsh-prompt-enhancer\n      name: dsh-prompt-enhancer\n    - id: another-plugin\n      name: another-plugin\n'));
 });
 
-test('client ModuleLoader and sidebar checks execute current artifact and reject broken artifacts', () => {
+test('client ModuleLoader and composer-slot checks execute current artifact and reject broken artifacts', () => {
   const source = readFileSync(join(root, 'client.js'), 'utf8');
   assert.deepEqual(inspectClient(source), {
-    tabId: 'dsh-prompt-enhancer', slotKey: 'dsh-prompt-enhancer', styleCount: 1,
+    slotKey: 'dsh-prompt-enhancer', styleCount: 1,
   });
   assert.throws(() => inspectClient(`${source}\nfunction (`), /Unexpected|SyntaxError/);
   assert.throws(() => inspectClient('void 0'), /ModuleLoader.load/);
   assert.throws(() => inspectClient("window.__ModuleLoader__.load({id:'wrong',factory(){return {}}})"), /wrong|dsh-prompt-enhancer/);
   assert.throws(() => inspectClient("window.__ModuleLoader__.load({id:'dsh-prompt-enhancer',factory(){return {inject:[],apply(){}}}})"), /inject omits/);
-  const noTab = "window.__ModuleLoader__.load({id:'dsh-prompt-enhancer',factory(){return {inject:['locale','slots','sidebarRightTabs'],apply(){}}}})";
-  assert.throws(() => inspectClient(noTab), /right-sidebar tab/);
+  const noTab = "window.__ModuleLoader__.load({id:'dsh-prompt-enhancer',factory(){return {inject:['locale','slots'],apply(){}}}})";
+  assert.throws(() => inspectClient(noTab), /composer button slot/);
 });
 
 test('all source-distribution contract checks pass without installing the plugin', async () => {

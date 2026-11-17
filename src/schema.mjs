@@ -8,24 +8,31 @@
 
 export const DEFAULTS = Object.freeze({
   enabled: true,
-  /** `auto`, `zh` or `en`; only affects labels/questions, never the input. */
+  /** `auto`, `zh` or `en`; affects labels and the rewrite language. */
   locale: 'auto',
-  /** Deprecated compatibility switch; never adds a fixed template. */
-  addSectionLabels: true,
-  /** Deprecated compatibility switch; no assumptions are invented. */
-  includeAssumptions: true,
-  /** Include optional, task-related clarifications, not a missing-section checklist. */
-  includeQuestions: true,
+  /** Model route used for the rewrite; empty = follow the session/agent route. */
+  provider: '',
+  /** Model id used for the rewrite; empty = follow the session/agent route. */
+  model: '',
+  /** Max output tokens for the rewrite call. */
+  maxTokens: 2048,
+  /** Rewrite timeout in milliseconds. */
+  timeoutMs: 20000,
+  /** Inputs longer than this are refused by the rewrite endpoint (still shown locally). */
+  maxPromptChars: 12000,
   /** Include safety/ambiguity warnings in the returned metadata. */
   includeRisks: true,
-  /** Analyze at most this many characters; keep oversized input unchanged. */
-  maxPromptChars: 12000,
-  /** Reserved ordering hint; the MVP does not inject a system prompt. */
+  /** Reserved ordering hint; kept for compatibility. */
   order: 950,
+  /** Deprecated v0.2 compatibility switches; no longer drive any behaviour. */
+  addSectionLabels: true,
+  includeAssumptions: true,
+  includeQuestions: true,
 });
 
-const BOOLEAN_KEYS = ['enabled', 'addSectionLabels', 'includeAssumptions', 'includeQuestions', 'includeRisks'];
-const NUMBER_KEYS = ['maxPromptChars', 'order'];
+const BOOLEAN_KEYS = ['enabled', 'includeRisks', 'addSectionLabels', 'includeAssumptions', 'includeQuestions'];
+const NUMBER_KEYS = ['maxPromptChars', 'maxTokens', 'timeoutMs', 'order'];
+const STRING_KEYS = ['provider', 'model'];
 
 /**
  * Normalize untrusted plugin configuration.
@@ -45,11 +52,16 @@ export function normalizeConfig(raw) {
     const number = source[key];
     if (typeof number === 'number' && Number.isFinite(number)) out[key] = number;
   }
+  for (const key of STRING_KEYS) {
+    if (typeof source[key] === 'string') out[key] = source[key].trim();
+  }
   if (source.locale === 'auto' || source.locale === 'zh' || source.locale === 'en') {
     out.locale = source.locale;
   }
 
   out.maxPromptChars = Math.max(1, Math.min(100_000, Math.trunc(out.maxPromptChars)));
+  out.maxTokens = Math.max(256, Math.min(16_384, Math.trunc(out.maxTokens)));
+  out.timeoutMs = Math.max(1_000, Math.min(120_000, Math.trunc(out.timeoutMs)));
   out.order = Math.max(0, Math.min(10_000, Math.trunc(out.order)));
   return out;
 }

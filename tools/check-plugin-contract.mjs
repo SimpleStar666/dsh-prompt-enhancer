@@ -14,7 +14,7 @@ import { Script, createContext } from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 export const EXPECTED_NAME = 'dsh-prompt-enhancer';
-const SIDEBAR_PROVIDER = '@deepseek-ai/dsh-client-ui-sidebar-right';
+const COMPOSER_PROVIDER = '@deepseek-ai/dsh-client-ui-conversation';
 const posixPath = (value) => value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
 
 export function listFiles(directory, prefix = '') {
@@ -28,7 +28,7 @@ export function requiredPackageFiles(directory) {
   const modules = existsSync(join(directory, 'src'))
     ? listFiles(join(directory, 'src'), 'src').filter((file) => file.endsWith('.mjs')) : [];
   return [
-    'index.js', 'client.js', 'src/enhancer.mjs', 'src/schema.mjs', 'src/plugin.mjs',
+    'index.js', 'client.js', 'src/enhancer.mjs', 'src/schema.mjs', 'src/plugin.mjs', 'src/rewrite.mjs',
     ...modules, 'README.md', 'LICENSE', 'docs/DETAIL.md', 'cordis.patch.yml', 'locale/zh.json', 'locale/en.json', 'icon.svg',
   ].filter((file, index, files) => files.indexOf(file) === index);
 }
@@ -114,11 +114,10 @@ export function inspectClient(source, filename = 'client.js') {
   const plugin = new Script('__registration.factory(__require)', { filename }).runInContext(sandbox, { timeout: 1000 });
   assert.equal(typeof plugin?.apply, 'function', 'client factory must export apply');
   assert.ok(Array.isArray(plugin.inject), 'client inject must be an array');
-  for (const service of ['locale', 'slots', 'sidebarRightTabs']) {
+  for (const service of ['locale', 'slots']) {
     assert.ok(plugin.inject.includes(service), `client inject omits ${service}`);
   }
-  const tabs = [];
-  const slots = [];
+  const composerSlots = [];
   const dictionaries = [];
   const disposers = [];
   const ctx = {
@@ -131,26 +130,21 @@ export function inspectClient(source, filename = 'client.js') {
       bind() { return (key) => key; },
       register(namespace, dictionary) { dictionaries.push({ namespace, dictionary }); return () => {}; },
     },
-    sidebarRightTabs: { register(tab) { tabs.push(tab); return () => {}; } },
     slots: {
-      inject(name, effect) { assert.equal(name, 'sidebar.right.pane.tab'); return effect(); },
-      register(slot, component) { slots.push({ slot, component }); return () => {}; },
+      inject(name, effect) { assert.equal(name, 'conversation.input.right'); return effect(); },
+      register(slot, component) { composerSlots.push({ slot, component }); return () => {}; },
     },
   };
   sandbox.__plugin = plugin;
   sandbox.__ctx = ctx;
   new Script('__plugin.apply(__ctx)', { filename }).runInContext(sandbox, { timeout: 1000 });
-  assert.equal(tabs.length, 1, 'client must register exactly one right-sidebar tab');
-  assert.equal(tabs[0].id, EXPECTED_NAME);
-  assert.equal(tabs[0].kind, 'prompt-enhancer');
-  assert.equal(typeof tabs[0].title, 'function');
-  assert.equal(slots.length, 1, 'client must register one tab-body slot');
-  assert.equal(slots[0].slot.name, 'sidebar.right.pane.tab');
-  assert.equal(slots[0].slot.key, EXPECTED_NAME);
-  assert.equal(typeof slots[0].component, 'function');
+  assert.equal(composerSlots.length, 1, 'client must register exactly one composer button slot');
+  assert.equal(composerSlots[0].slot.name, 'conversation.input.right');
+  assert.equal(composerSlots[0].slot.id, EXPECTED_NAME);
+  assert.equal(typeof composerSlots[0].component, 'function');
   assert.ok(dictionaries.length > 0, 'client must register locale dictionaries');
   for (const dispose of disposers.reverse()) dispose();
-  return { tabId: tabs[0].id, slotKey: slots[0].slot.key, styleCount: documentNodes.length };
+  return { slotKey: composerSlots[0].slot.id, styleCount: documentNodes.length };
 }
 
 export async function assertEntryContract(entry) {
@@ -173,13 +167,26 @@ export async function assertHttpContract(entry) {
   const registrations = [];
   const disposers = [];
   let disposeCount = 0;
+  const llm = {
+    calls: [],
+    stream(options) {
+      this.calls.push(options);
+      return (async function* () {
+        yield { type: 'text-delta', text: '改写后的提示词' };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      })();
+    },
+  };
   const state = entry.apply({
     effect(effect) { disposers.push(effect()); },
     connection: { fetch: { register(route) { registrations.push(route); return () => { disposeCount += 1; }; } } },
+    llm,
+    agentDefaultModel: { currentSelection: () => ({ provider: 'p', model: 'm' }) },
   }, { locale: 'zh' });
   assert.equal(state.http, true, 'apply did not activate mocked HTTP registration');
-  assert.deepEqual(registrations.map((route) => route.path).sort(), [entry.ENHANCE_PATH, entry.CONFIG_PATH].sort());
+  assert.deepEqual(registrations.map((route) => route.path).sort(), [entry.ENHANCE_PATH, entry.ROUTE_PATH, entry.CONFIG_PATH].sort());
   assert.equal(entry.ENHANCE_PATH, '/api/prompt-enhancer/enhance');
+  assert.equal(entry.ROUTE_PATH, '/api/prompt-enhancer/route');
   assert.equal(entry.CONFIG_PATH, '/api/prompt-enhancer/config');
   for (const route of registrations) {
     assert.deepEqual(route.methods, ['GET', 'POST']);
@@ -196,7 +203,8 @@ export async function assertHttpContract(entry) {
   assert.equal(response.status, 200);
   const result = await response.json();
   assert.equal(result.ok, true);
-  assert.ok(result.enhancedPrompt.includes('帮我写一个报告'));
+  assert.equal(result.enhancedPrompt, '改写后的提示词');
+  assert.equal(llm.calls.length, 1, 'the mocked llm service must be invoked');
   for (const key of ['changeSet', 'assumptions', 'missingQuestions', 'riskFlags']) assert.ok(Array.isArray(result[key]), `HTTP ${key} must be an array`);
   assert.ok(result.confidence >= 0 && result.confidence <= 1);
   const initial = await config.fetch(request(entry.CONFIG_PATH));
@@ -212,7 +220,7 @@ export async function assertHttpContract(entry) {
   assert.equal((await invalid.json()).ok, false);
   assert.equal((await enhance.fetch(request(entry.ENHANCE_PATH))).status, 405);
   for (const dispose of disposers.reverse()) if (typeof dispose === 'function') dispose();
-  assert.equal(disposeCount, 2, 'HTTP routes must be disposed with the host effect');
+  assert.equal(disposeCount, 3, 'HTTP routes must be disposed with the host effect');
   assert.equal(entry.apply({}).http, false, 'headless apply must remain usable');
 }
 
@@ -236,7 +244,7 @@ export async function runChecks(directory = root) {
     assert.equal(pkg?.dsh?.bundle?.patch, './cordis.patch.yml');
     assert.equal(pkg?.dsh?.client?.platform, 'web');
     assert.equal(pkg?.dsh?.client?.immediately, true);
-    assert.ok(pkg?.dsh?.client?.inject?.includes(SIDEBAR_PROVIDER), 'client manifest must inject the right-sidebar provider');
+    assert.ok(pkg?.dsh?.client?.inject?.includes(COMPOSER_PROVIDER), 'client manifest must inject the composer UI provider');
   });
   await check('package.files explicitly covers all required distribution artifacts', () => {
     const required = requiredPackageFiles(directory);
