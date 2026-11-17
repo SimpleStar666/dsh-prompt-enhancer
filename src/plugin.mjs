@@ -42,25 +42,21 @@ function methodOf(request) {
   return String(request?.method ?? 'GET').toUpperCase();
 }
 
+const INVALID_BODY = Symbol('invalid-json-body');
+const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
 async function readBody(request) {
-  if (!request) return {};
+  if (!request) return INVALID_BODY;
   try {
-    if (typeof request.json === 'function') {
-      const value = await request.json();
-      return value && typeof value === 'object' ? value : {};
-    }
+    if (typeof request.json === 'function') return await request.json();
+    const body = request.body;
+    if (typeof body === 'string') return JSON.parse(body);
+    if (body instanceof Uint8Array) return JSON.parse(new TextDecoder().decode(body));
+    if (isRecord(body) && !ArrayBuffer.isView(body)) return body;
   } catch {
-    // Fall through to body parsing for host shims that expose an already-read body.
+    return INVALID_BODY;
   }
-  const body = request.body;
-  if (body && typeof body === 'object' && !ArrayBuffer.isView(body)) return body;
-  if (typeof body === 'string') {
-    try { return JSON.parse(body); } catch { return null; }
-  }
-  if (body instanceof Uint8Array) {
-    try { return JSON.parse(new TextDecoder().decode(body)); } catch { return null; }
-  }
-  return {};
+  return INVALID_BODY;
 }
 
 function fallbackResult(prompt, error) {
@@ -108,10 +104,12 @@ export function apply(ctx, rawConfig) {
         if (method === 'GET') return jsonResponse({ ok: true, config });
         if (method !== 'POST') return jsonResponse({ ok: false, error: '方法不允许。' }, 405);
         const body = await readBody(request);
-        if (body === null) return jsonResponse({ ok: false, error: '请求体不是合法 JSON。', config }, 400);
+        if (!isRecord(body) || (Object.hasOwn(body, 'config') && !isRecord(body.config))) {
+          return jsonResponse({ ok: false, error: '配置请求必须是 JSON 对象。', config }, 400);
+        }
         // Accept either `{...config}` or `{config:{...}}` to keep clients simple.
-        const candidate = body?.config && typeof body.config === 'object' ? body.config : body;
-        config = normalizeConfig({ ...config, ...(candidate && typeof candidate === 'object' ? candidate : {}) });
+        const candidate = Object.hasOwn(body, 'config') ? body.config : body;
+        config = normalizeConfig({ ...config, ...candidate });
         state.config = config;
         return jsonResponse({ ok: true, config });
       }
@@ -119,13 +117,16 @@ export function apply(ctx, rawConfig) {
       if (path === ENHANCE_PATH) {
         if (method !== 'POST') return jsonResponse({ ok: false, error: '方法不允许。' }, 405);
         const body = await readBody(request);
-        if (body === null) return jsonResponse({ ...fallbackResult('', new Error('请求体不是合法 JSON。')), config }, 400);
-        const prompt = typeof body === 'string'
-          ? body
-          : (typeof body?.prompt === 'string' ? body.prompt : (typeof body?.text === 'string' ? body.text : ''));
-        const effectiveConfig = normalizeConfig({ ...config, ...(body?.config && typeof body.config === 'object' ? body.config : {}) });
+        const prompt = typeof body === 'string' ? body : body?.prompt ?? body?.text;
+        if (typeof prompt !== 'string' || (typeof body !== 'string' && !isRecord(body)) ||
+            (isRecord(body) && Object.hasOwn(body, 'config') && !isRecord(body.config))) {
+          return jsonResponse({ ...fallbackResult('', new Error('请求必须是 JSON 字符串，或包含 prompt/text 字符串的对象。')), config }, 400);
+        }
+        const effectiveConfig = normalizeConfig({ ...config, ...(isRecord(body?.config) ? body.config : {}) });
+        // A request cannot silently re-enable a disabled host plugin.
+        effectiveConfig.enabled = config.enabled && effectiveConfig.enabled;
         try {
-          const result = enhancePrompt(prompt, effectiveConfig);
+          const result = enhancePrompt(prompt, { ...effectiveConfig, profile: body?.profile });
           return jsonResponse({ ok: true, ...result, config: effectiveConfig });
         } catch (error) {
           // Do not turn an enhancement bug into a blocked user request.

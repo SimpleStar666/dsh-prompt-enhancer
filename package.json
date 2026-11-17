@@ -13,8 +13,13 @@
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": ["index.js", "client.js", "src", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE", "docs", "tools", "test"],
   "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node tools/check-plugin-contract.mjs",
+    "verify": "node --test test/*.test.mjs && node tools/check-plugin-contract.mjs && node --check client.js && node --check index.js"
+  },
   "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "prompt", "enhancer"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

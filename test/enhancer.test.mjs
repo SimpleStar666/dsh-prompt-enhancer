@@ -16,6 +16,11 @@ function assertResultShape(result) {
   }
   assert.equal(typeof result.enhancedPrompt, 'string');
   assert.ok(Array.isArray(result.changeSet));
+  for (const change of result.changeSet) {
+    assert.equal(typeof change.op, 'string');
+    assert.equal(typeof change.path, 'string');
+    assert.equal(typeof change.reason, 'string');
+  }
   assert.ok(Array.isArray(result.assumptions));
   assert.ok(Array.isArray(result.missingQuestions));
   assert.ok(Array.isArray(result.riskFlags));
@@ -83,8 +88,9 @@ test('detectGaps identifies missing objective/output/context signals', () => {
   assert.ok(gaps.some((gap) => /target|background|outputFormat|successCriteria/i.test(gap.key)));
 });
 
-test('normalizeText is deterministic and trims/normalizes whitespace', () => {
-  assert.equal(normalizeText('  foo\r\n\t bar  '), 'foo bar');
+test('normalizeText extracts text without damaging code or whitespace', () => {
+  assert.equal(normalizeText('  foo\r\n\t bar  '), '  foo\r\n\t bar  ');
+  assert.equal(normalizeText({ content: [{ text: 'first' }, 'second'] }), 'first\nsecond');
   assert.equal(normalizeText(null), '');
   assert.equal(normalizeText(undefined), '');
 });
@@ -94,7 +100,10 @@ test('empty or whitespace input is safe and does not throw', () => {
     const result = enhancePrompt(input, { profile: 'general' });
     assertResultShape(result);
     assert.equal(result.enhancedPrompt, '');
-    assert.ok(result.missingQuestions.length >= 0);
+    for (const key of ['changeSet', 'assumptions', 'missingQuestions', 'riskFlags']) {
+      assert.deepEqual(result[key], []);
+    }
+    assert.equal(result.confidence, 0);
   }
 });
 
@@ -105,4 +114,73 @@ test('normalization and config are defensive and dependency-free', () => {
   assert.equal(config.order, 950);
   assert.equal(Object.hasOwn(config, 'unknown'), false);
   assert.doesNotThrow(() => normalizeConfig(null));
+});
+
+test('numeric config ignores coercible wrong types and clamps only numbers', () => {
+  for (const value of [null, '', true, '12', Symbol('bad'), { valueOf() { throw new Error('no coercion'); } }, Infinity, NaN]) {
+    assert.equal(normalizeConfig({ maxPromptChars: value, order: value }).maxPromptChars, 12000);
+    assert.equal(normalizeConfig({ order: value }).order, 950);
+  }
+  assert.equal(normalizeConfig({ maxPromptChars: 0 }).maxPromptChars, 1);
+  assert.equal(normalizeConfig({ maxPromptChars: 200000 }).maxPromptChars, 100000);
+});
+
+test('disabled enhancement returns the exact original with empty metadata', () => {
+  const prompt = '  请实现：\n```python\nif True:\n    print("x")\n```\n不要联网。  ';
+  const result = enhancePrompt(prompt, { enabled: false });
+  assert.equal(result.enhancedPrompt, prompt);
+  for (const key of ['changeSet', 'assumptions', 'missingQuestions', 'riskFlags']) assert.deepEqual(result[key], []);
+  assert.equal(result.confidence, 0);
+});
+
+test('multiline code and spacing are preserved verbatim', () => {
+  const prompt = '请解释：\n```python\nif True:\n    print("a  b")\n```\n\t不要改代码。';
+  assert.ok(enhancePrompt(prompt).enhancedPrompt.startsWith(prompt));
+});
+
+test('over-budget input is retained entirely, explained, and scanned for tail secrets', () => {
+  const prompt = '公开材料'.repeat(10) + '\npassword: keep-me\n必须保留尾部约束';
+  const result = enhancePrompt(prompt, { maxPromptChars: 12 });
+  assert.equal(result.enhancedPrompt, prompt);
+  assert.ok(result.riskFlags.includes('input_too_long'));
+  assert.ok(result.riskFlags.includes('secret_or_personal_data'));
+  assert.equal(result.changeSet[0].op, 'preserve');
+  assert.match(result.changeSet[0].reason, /maxPromptChars/);
+  assert.deepEqual(result.missingQuestions, []);
+  assert.equal(enhancePrompt('ab', { maxPromptChars: 1 }).enhancedPrompt, 'ab');
+  assert.ok(enhancePrompt('ab', { maxPromptChars: 1 }).riskFlags.includes('enhancement_skipped'));
+});
+
+test('profile-specific guidance remains optional and never fabricates facts', () => {
+  const prompt = '帮我做个东西';
+  const general = enhancePrompt(prompt);
+  for (const [profile, cue] of [['writing', '目标读者'], ['product', '目标用户'], ['coding', '技术栈']]) {
+    const result = enhancePrompt(prompt, { profile });
+    assert.ok(result.enhancedPrompt.startsWith(prompt));
+    assert.ok(result.enhancedPrompt.includes(cue));
+    assert.notEqual(result.enhancedPrompt, general.enhancedPrompt);
+  }
+  for (const profile of ['unknown', null, 123, [], {}, { toString() { throw new Error('no coercion'); } }]) {
+    assert.deepEqual(enhancePrompt(prompt, { profile, unknown: true }), general);
+  }
+});
+
+test('questions are limited to three and metadata/section toggles are respected', () => {
+  const prompt = '一个想法';
+  assert.equal(enhancePrompt(prompt).missingQuestions.length, 3);
+  const result = enhancePrompt(prompt, {
+    addSectionLabels: false, includeQuestions: false, includeAssumptions: false, includeRisks: false,
+  });
+  assert.equal(result.enhancedPrompt, prompt);
+  for (const key of ['changeSet', 'assumptions', 'missingQuestions', 'riskFlags']) assert.deepEqual(result[key], []);
+});
+
+test('complete requests are not expanded and gap detection is only heuristic', () => {
+  const prompt = '目标：写报告。背景：项目回顾。要求：只用资料。输出格式：Markdown。验收标准：可验证。';
+  const result = enhancePrompt(prompt);
+  assert.equal(result.enhancedPrompt, prompt);
+  assert.deepEqual(result.changeSet, []);
+  assert.deepEqual(result.missingQuestions, []);
+  assert.deepEqual(result, enhancePrompt(prompt));
+  assert.doesNotThrow(() => JSON.stringify(result));
 });

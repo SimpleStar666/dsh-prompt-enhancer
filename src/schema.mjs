@@ -12,15 +12,15 @@ export const DEFAULTS = Object.freeze({
   locale: 'auto',
   /** Add explicit section headings and gap markers to the result. */
   addSectionLabels: true,
-  /** Include inferred assumptions in the returned metadata. */
+  /** Include a non-invention policy reminder in the returned metadata. */
   includeAssumptions: true,
   /** Include questions for sections that are absent. */
   includeQuestions: true,
   /** Include safety/ambiguity warnings in the returned metadata. */
   includeRisks: true,
-  /** Keep an accidentally huge request from consuming the host process. */
+  /** Analyze at most this many characters; keep oversized input unchanged. */
   maxPromptChars: 12000,
-  /** Ordering hint for hosts that expose a system-prompt section API. */
+  /** Reserved ordering hint; the MVP does not inject a system prompt. */
   order: 950,
 });
 
@@ -42,8 +42,8 @@ export function normalizeConfig(raw) {
     if (typeof source[key] === 'boolean') out[key] = source[key];
   }
   for (const key of NUMBER_KEYS) {
-    const number = Number(source[key]);
-    if (Number.isFinite(number)) out[key] = number;
+    const number = source[key];
+    if (typeof number === 'number' && Number.isFinite(number)) out[key] = number;
   }
   if (source.locale === 'auto' || source.locale === 'zh' || source.locale === 'en') {
     out.locale = source.locale;

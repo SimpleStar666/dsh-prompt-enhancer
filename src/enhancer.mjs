@@ -6,6 +6,8 @@
  * requirements.  Callers can therefore review or discard the result safely.
  */
 
+import { normalizeConfig } from './schema.mjs';
+
 const COMPONENTS = Object.freeze([
   {
     key: 'target',
@@ -52,28 +54,43 @@ const COMPONENTS = Object.freeze([
   },
 ]);
 
-const SENSITIVE = /(?:password|passwd|secret|api[_ -]?key|token|bearer\s+[a-z0-9._~+/=-]+|\bsk-[a-z0-9_-]{12,}\b|私钥|密码|身份证|银行卡|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|(?:\+?\d[\d -]{7,}\d)|\b(?:id|身份证号)\s*[:：]?\s*[a-z0-9-]{4,}\b)/i;
+// Profile hints are questions/placeholders, never inferred facts or hard requirements.
+const PROFILE_HINTS = Object.freeze({
+  general: {},
+  writing: {
+    background: { zh: '请补充目标读者、使用场景和可用素材。', en: 'Add the intended audience, usage context, and available source material.' },
+    outputFormat: { zh: '请说明文体、语气、结构和期望篇幅。', en: 'Specify the genre, tone, structure, and desired length.' },
+    successCriteria: { zh: '请说明读者应理解或采取什么行动，以及事实核验要求。', en: 'Describe what readers should understand or do, and any fact-checking criteria.' },
+  },
+  product: {
+    background: { zh: '请补充目标用户、核心问题、现状和已有验证。', en: 'Add the target users, core problem, current situation, and existing validation.' },
+    constraints: { zh: '请说明范围、资源、时间和必须遵守的边界。', en: 'Specify scope, resources, timing, and required boundaries.' },
+    successCriteria: { zh: '请说明可验证的用户价值、指标或验收条件。', en: 'Specify verifiable user value, metrics, or acceptance criteria.' },
+  },
+  coding: {
+    background: { zh: '请补充技术栈、运行环境、相关代码及当前行为。', en: 'Add the stack, runtime, relevant code, and current behavior.' },
+    constraints: { zh: '请说明兼容性、依赖、安全和不可修改的接口约束。', en: 'Specify compatibility, dependencies, security, and interfaces that must not change.' },
+    successCriteria: { zh: '请说明预期行为、边界情况和可运行的验收测试。', en: 'Specify expected behavior, edge cases, and runnable acceptance tests.' },
+  },
+});
+
+const SENSITIVE = /(?:password|passwd|secret|api[_ -]?key|token|bearer\s+[a-z0-9._~+/=-]+|\bsk-[a-z0-9_-]{12,}\b|私钥|密码|身份证|银行卡|[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,10}|(?:\+?\d[\d -]{7,30}\d)|\b(?:id|身份证号)\s*[:：]?\s*[a-z0-9-]{4,}\b)/i;
 const CONFLICTS = [
   [/简洁|简短/i, /详细|全面|详尽/i],
   [/不要解释|只给答案/i, /请解释|详细说明/i],
   [/中文/i, /英文|英语/i],
 ];
 
-/**
- * Convert common host input shapes into a bounded, normalized string.
- * @param {unknown} value
- * @returns {string}
- */
+/** Extract common host input shapes without changing code, whitespace or newlines. */
 export function normalizeText(value) {
-  const collapse = (text) => String(text).replace(/[\t\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  if (typeof value === 'string') return collapse(value);
+  if (typeof value === 'string') return value;
   if (!value || typeof value !== 'object') return '';
   for (const key of ['prompt', 'text', 'input']) {
-    if (typeof value[key] === 'string') return collapse(value[key]);
+    if (typeof value[key] === 'string') return value[key];
   }
-  if (typeof value.content === 'string') return collapse(value.content);
+  if (typeof value.content === 'string') return value.content;
   if (Array.isArray(value.content)) {
-    return collapse(value.content.map((part) => typeof part === 'string' ? part : part && typeof part.text === 'string' ? part.text : '').join(' '));
+    return value.content.map((part) => typeof part === 'string' ? part : part && typeof part.text === 'string' ? part.text : '').join('\n');
   }
   return '';
 }
@@ -101,12 +118,12 @@ export function detectGaps(prompt) {
   }));
 }
 
-function questionFor(component, locale) {
-  return locale === 'zh' ? component.question.zh : component.question.en;
+function questionFor(component, locale, profile) {
+  return PROFILE_HINTS[profile]?.[component.key]?.[locale] ?? component.question[locale];
 }
 
-function placeholderFor(component, locale) {
-  return locale === 'zh' ? component.placeholder.zh : component.placeholder.en;
+function placeholderFor(component, locale, profile) {
+  return PROFILE_HINTS[profile]?.[component.key]?.[locale] ?? component.placeholder[locale];
 }
 
 /**
@@ -120,23 +137,38 @@ export function enhancePrompt(input, options = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input)
     ? input
     : { prompt: input };
-  const config = options && typeof options === 'object' && !Array.isArray(options)
-    ? { ...(source.config && typeof source.config === 'object' ? source.config : {}), ...options }
-    : (source.config && typeof source.config === 'object' ? source.config : {});
+  const settings = {
+    ...(source.config && typeof source.config === 'object' ? source.config : {}),
+    ...(options && typeof options === 'object' && !Array.isArray(options) ? options : {}),
+  };
+  const config = normalizeConfig(settings);
   const raw = asPrompt(source);
-  const maxChars = Number.isFinite(Number(config.maxPromptChars)) ? Math.max(256, Math.trunc(Number(config.maxPromptChars))) : 12_000;
-  const truncated = raw.length > maxChars;
-  const prompt = truncated ? raw.slice(0, maxChars) : raw;
+  const unchanged = (riskFlags = [], changeSet = []) => ({
+    enhancedPrompt: raw.trim() ? raw : '',
+    changeSet, assumptions: [], missingQuestions: [],
+    riskFlags: config.includeRisks ? riskFlags : [], confidence: 0,
+  });
+  if (!raw.trim() || !config.enabled) return unchanged();
+  // Never clip user constraints or code. Oversized inputs fail open unchanged.
+  if (raw.length > config.maxPromptChars) {
+    const riskFlags = ['input_too_long', 'enhancement_skipped'];
+    if (containsSensitiveData(raw)) riskFlags.push('sensitive_data_possible', 'secret_or_personal_data');
+    return unchanged(riskFlags, [{
+      op: 'preserve', path: '/enhancedPrompt',
+      reason: 'Input exceeds maxPromptChars; enhancement was skipped and the full original was retained.',
+    }]);
+  }
+  const prompt = raw;
   const locale = chooseLocale(prompt, config);
+  const requestedProfile = settings.profile ?? source.profile;
+  const profile = typeof requestedProfile === 'string' && Object.hasOwn(PROFILE_HINTS, requestedProfile) ? requestedProfile : 'general';
   const gaps = detectGaps(prompt);
   const missing = COMPONENTS.filter((component, index) => !gaps[index].present);
-  const missingQuestions = config.includeQuestions === false ? [] : missing.map((component) => questionFor(component, locale));
+  const missingQuestions = config.includeQuestions === false ? [] : missing.slice(0, 3).map((component) => questionFor(component, locale, profile));
   const assumptions = config.includeAssumptions === false
     ? []
     : [locale === 'zh' ? '保留原始意图，不替用户臆造缺失的事实或要求。' : 'The original intent is preserved; missing facts and requirements are not invented.'];
   const riskFlags = [];
-  if (!prompt) riskFlags.push('empty_prompt');
-  if (truncated) riskFlags.push('prompt_truncated');
   if (containsSensitiveData(prompt)) {
     riskFlags.push('sensitive_data_possible');
     riskFlags.push('secret_or_personal_data');
@@ -158,29 +190,21 @@ export function enhancePrompt(input, options = {}) {
     const lines = [`\n\n## ${title}`];
     for (const component of missing) {
       const label = locale === 'zh' ? component.zh : component.en;
-      lines.push(`### ${label}\n${placeholderFor(component, locale)}`);
+      lines.push(`### ${label}\n${placeholderFor(component, locale, profile)}`);
       changeSet.push({
-        type: 'add',
-        section: component.key,
-        description: locale === 'zh' ? `补充${label}信息` : `Add ${label.toLowerCase()} information`,
+        op: 'add',
+        path: `/sections/${component.key}`,
+        description: locale === 'zh' ? `添加${label}待补充项` : `Add a ${label.toLowerCase()} placeholder`,
         reason: locale === 'zh' ? '原提示词未检测到该部分。' : 'This section was not detected in the original prompt.',
       });
     }
     enhancedPrompt += lines.join('\n');
   }
-  if (!changeSet.length) {
-    changeSet.push({
-      type: 'preserve',
-      section: 'all',
-      description: locale === 'zh' ? '五类关键信息均已检测到，保留原提示词。' : 'All five key sections were detected; the original prompt is preserved.',
-      reason: locale === 'zh' ? '没有需要自动补写的缺口。' : 'No rule-based gaps required automatic scaffolding.',
-    });
-  }
 
   // A complete, unambiguous prompt is more trustworthy than one with many gaps.
   const completeness = (COMPONENTS.length - missing.length) / COMPONENTS.length;
   let confidence = 0.45 + completeness * 0.5;
-  if (truncated || !prompt || uniqueRisks.includes('conflicting_instructions')) confidence -= 0.15;
+  if (uniqueRisks.includes('conflicting_instructions')) confidence -= 0.15;
   confidence = Math.max(0, Math.min(1, Number(confidence.toFixed(2))));
 
   return {

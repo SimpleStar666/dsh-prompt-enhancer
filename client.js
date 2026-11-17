@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
-    const { createElement: h, useCallback, useEffect, useMemo, useState } = React
+    const { createElement: h, useCallback, useEffect, useMemo, useRef, useState } = React
 
     const NS = 'promptEnhancer'
     const KIND = 'prompt-enhancer'
@@ -45,14 +45,15 @@ window.__ModuleLoader__.load({
         noItems: '暂无',
         copy: '复制',
         copied: '已复制',
-        accept: '接受回填',
-        accepted: '已确认（仅面板内）',
+        copyFailed: '复制失败，请手动选择并复制增强稿。',
+        accept: '确认增强稿',
+        accepted: '已确认，请复制后自行粘贴',
         undo: '撤销增强',
         restore: '恢复原文',
         errorPrefix: '增强失败：{message}',
         required: '请先输入原始想法',
         retry: '重试',
-        hint: '接受回填只会在本面板显示确认，不会自动发送消息。',
+        hint: '确认增强稿仅在本面板标记确认；请复制后自行粘贴到输入框，不会自动回填或发送消息。',
       },
       en: {
         'type.label': 'Idea enhancer',
@@ -79,14 +80,15 @@ window.__ModuleLoader__.load({
         noItems: 'None',
         copy: 'Copy',
         copied: 'Copied',
-        accept: 'Accept backfill',
-        accepted: 'Confirmed (panel only)',
+        copyFailed: 'Copy failed. Select and copy the draft manually.',
+        accept: 'Confirm draft',
+        accepted: 'Confirmed; copy and paste it yourself',
         undo: 'Undo enhancement',
         restore: 'Restore original',
         errorPrefix: 'Enhancement failed: {message}',
         required: 'Enter an original idea first',
         retry: 'Retry',
-        hint: 'Accept backfill only confirms in this panel; it never sends a message automatically.',
+        hint: 'Confirm draft only marks it confirmed in this panel. Copy it and paste it into the input yourself; nothing is backfilled or sent automatically.',
       },
     }
 
@@ -133,9 +135,20 @@ window.__ModuleLoader__.load({
 
     function normaliseList(value) {
       if (value == null) return []
-      if (Array.isArray(value)) return value.map((item) => typeof item === 'string' ? item : (item?.text ?? item?.label ?? JSON.stringify(item))).filter(Boolean)
-      if (typeof value === 'string') return value.trim() ? [value] : []
-      return [String(value)]
+      const itemText = (item) => {
+        if (typeof item === 'string') return item.trim() ? item : ''
+        if (item == null) return ''
+        if (typeof item !== 'object') return String(item)
+        const description = typeof item.description === 'string' ? item.description.trim() : ''
+        const reason = typeof item.reason === 'string' ? item.reason.trim() : ''
+        if (description || reason) return description && reason && description !== reason ? `${description} — ${reason}` : description || reason
+        // Unknown objects are omitted rather than exposing raw JSON to the user.
+        for (const key of ['text', 'label', 'question']) {
+          if (typeof item[key] === 'string' && item[key].trim()) return item[key]
+        }
+        return ''
+      }
+      return (Array.isArray(value) ? value : [value]).map(itemText).filter(Boolean)
     }
 
     async function callJson(path, init) {
@@ -159,9 +172,9 @@ window.__ModuleLoader__.load({
       const enhanced = source?.enhancedPrompt ?? source?.enhanced ?? source?.draft ?? source?.prompt ?? source?.text
       return {
         enhanced: typeof enhanced === 'string' && enhanced.trim() ? enhanced : original,
-        questions: normaliseList(source?.clarifyingQuestions ?? source?.clarificationQuestions ?? source?.questions),
+        questions: normaliseList(source?.missingQuestions ?? source?.clarifyingQuestions ?? source?.clarificationQuestions ?? source?.questions),
         assumptions: normaliseList(source?.assumptions),
-        changes: normaliseList(source?.changeSummary ?? source?.changes ?? source?.summary),
+        changes: normaliseList(source?.changeSet ?? source?.changeSummary ?? source?.changes ?? source?.summary),
         risks: normaliseList(source?.riskFlags ?? source?.risks ?? source?.risk),
       }
     }
@@ -187,6 +200,14 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState(null)
       const [lastOriginal, setLastOriginal] = useState('')
       const [accepted, setAccepted] = useState(false)
+      // A ref closes the gap before React rerenders disabled controls. Every
+      // operation checks it too, so even callbacks retained by an old render
+      // cannot clear/edit/confirm a request that is still running.
+      const request = useRef({ busy: false, revision: 0 })
+      useEffect(() => () => {
+        request.current.busy = false
+        request.current.revision += 1
+      }, [])
 
       const profileOptions = useMemo(() => [
         ['general', t('profileGeneral')],
@@ -196,34 +217,47 @@ window.__ModuleLoader__.load({
       ], [t])
 
       const enhance = useCallback(async () => {
-        const text = original.trim()
-        if (!text) {
+        if (request.current.busy) return
+        if (!original.trim()) {
           setError(t('required'))
           setResult(null)
           return
         }
+        const revision = ++request.current.revision
+        request.current.busy = true
         setBusy(true)
         setError(null)
         setNotice(null)
         setAccepted(false)
         setLastOriginal(original)
+        // Never leave a previous draft actionable while a new result is pending.
+        setResult(null)
+        setDraft('')
         try {
           const payload = await callJson(ENDPOINT, { method: 'POST', body: { text: original, idea: original, profile } })
+          if (request.current.revision !== revision) return
           const next = extractResult(payload, original)
           setResult(next)
           setDraft(next.enhanced)
         } catch (cause) {
-          // Keep the original text in both editors when the service is unavailable.
+          if (request.current.revision !== revision) return
+          // Keep the exact original available when the service is unavailable.
           setResult(null)
           setDraft(original)
           setError(cause?.message ?? String(cause))
         } finally {
-          setBusy(false)
+          if (request.current.revision === revision) {
+            request.current.busy = false
+            setBusy(false)
+          }
         }
       }, [original, profile, t])
 
       const clear = useCallback(() => {
+        if (request.current.busy) return
+        request.current.revision += 1
         setOriginal('')
+        setLastOriginal('')
         setResult(null)
         setDraft('')
         setError(null)
@@ -232,18 +266,24 @@ window.__ModuleLoader__.load({
       }, [])
 
       const undo = useCallback(() => {
-        if (!result) return
-        setDraft(lastOriginal || original)
+        if (request.current.busy || !result) return
+        request.current.revision += 1
+        setOriginal(lastOriginal)
+        setDraft(lastOriginal)
         setResult(null)
         setAccepted(false)
         setNotice(t('restore'))
-      }, [lastOriginal, original, result, t])
+      }, [lastOriginal, result, t])
 
       const copy = useCallback(async () => {
-        const text = draft || original
+        if (request.current.busy) return
+        const revision = request.current.revision
+        const text = result ? draft : original
         if (!text) return
+        let copied = false
         try {
           await navigator.clipboard.writeText(text)
+          copied = true
         } catch {
           const area = document.createElement('textarea')
           area.value = text
@@ -251,16 +291,16 @@ window.__ModuleLoader__.load({
           area.style.opacity = '0'
           document.body.appendChild(area)
           area.focus(); area.select()
-          try { document.execCommand('copy') } finally { area.remove() }
+          try { copied = document.execCommand('copy') === true } catch { copied = false } finally { area.remove() }
         }
-        setNotice(t('copied'))
-      }, [draft, original, t])
+        if (request.current.revision === revision && !request.current.busy) setNotice(t(copied ? 'copied' : 'copyFailed'))
+      }, [draft, original, result, t])
 
       const accept = useCallback(() => {
-        if (!draft.trim()) return
+        if (request.current.busy || !result || !draft.trim()) return
         setAccepted(true)
         setNotice(t('accepted'))
-      }, [draft, t])
+      }, [draft, result, t])
 
       return h('div', { className: 'pe' },
         h('div', { className: 'pe-head' },
@@ -274,18 +314,27 @@ window.__ModuleLoader__.load({
               className: 'pe-textarea',
               value: original,
               placeholder: t('placeholder'),
-              onChange: (event) => { setOriginal(event.target.value); if (!result) setDraft(event.target.value) },
+              onChange: (event) => {
+                if (request.current.busy) return
+                request.current.revision += 1
+                setOriginal(event.target.value)
+                setResult(null)
+                setDraft(event.target.value)
+                setAccepted(false)
+                setError(null)
+                setNotice(null)
+              },
               disabled: busy,
             })),
           h('div', { className: 'pe-field' },
             h('label', { className: 'pe-label', htmlFor: `${ID}-profile` }, t('profile')),
             h('select', {
               id: `${ID}-profile`, className: 'pe-select', value: profile, disabled: busy,
-              onChange: (event) => setProfile(event.target.value),
+              onChange: (event) => { if (!request.current.busy) setProfile(event.target.value) },
             }, profileOptions.map(([value, label]) => h('option', { value, key: value }, label)))),
           h('div', { className: 'pe-actions' },
             h('button', { className: 'pe-btn pe-btn-primary', disabled: busy, onClick: enhance }, busy ? t('enhancing') : t('enhance')),
-            h('button', { className: 'pe-btn', disabled: busy && !original, onClick: clear }, t('clear'))),
+            h('button', { className: 'pe-btn', disabled: busy, onClick: clear }, t('clear'))),
           error ? h('div', { className: 'pe-status pe-error' }, format(t('errorPrefix'), { message: error }), h('button', { className: 'pe-btn', style: { marginLeft: 6 }, onClick: enhance, disabled: busy }, t('retry'))) : null,
           notice ? h('div', { className: `pe-status${accepted ? ' pe-accepted' : ''}` }, notice) : null,
           result
@@ -293,19 +342,20 @@ window.__ModuleLoader__.load({
               h('div', { className: 'pe-result-head' },
                 h('div', { className: 'pe-result-title' }, t('enhanced')),
                 h('div', { className: 'pe-result-actions' },
-                  h('button', { className: 'pe-btn', onClick: copy }, t('copy')),
-                  h('button', { className: 'pe-btn', onClick: undo }, t('undo')))),
+                  h('button', { className: 'pe-btn', onClick: copy, disabled: busy }, t('copy')),
+                  h('button', { className: 'pe-btn', onClick: undo, disabled: busy }, t('undo')))),
               h('textarea', {
-                className: 'pe-textarea', value: draft, placeholder: t('enhancedPlaceholder'),
-                onChange: (event) => { setDraft(event.target.value); setAccepted(false) },
+                className: 'pe-textarea', value: draft, placeholder: t('enhancedPlaceholder'), disabled: busy,
+                onChange: (event) => { if (!request.current.busy) { setDraft(event.target.value); setAccepted(false) } },
               }),
               h('div', { className: 'pe-actions' },
-                h('button', { className: 'pe-btn pe-btn-primary', onClick: accept }, accepted ? t('accepted') : t('accept'))),
+                h('button', { className: 'pe-btn pe-btn-primary', onClick: accept, disabled: busy }, accepted ? t('accepted') : t('accept'))),
               h(ListCard, { title: t('questions'), items: result.questions, t }),
               h(ListCard, { title: t('assumptions'), items: result.assumptions, t }),
               h(ListCard, { title: t('changes'), items: result.changes, t }),
               h(ListCard, { title: t('risks'), items: result.risks, warning: true, t }))
-            : h('p', { className: 'pe-hint' }, t('hint'))))
+            : null,
+          h('p', { className: 'pe-hint' }, t('hint'))))
     }
 
     function apply(ctx) {
@@ -336,7 +386,7 @@ window.__ModuleLoader__.load({
     exports.name = 'prompt-enhancer-client'
     exports.inject = ['slots', 'locale', 'sidebarRightTabs']
     exports.apply = apply
-    exports.__test = { ID, KIND, extractResult, normaliseList }
+    exports.__test = { ID, KIND, DICT, extractResult, normaliseList, EnhancerBody }
     return module.exports
   },
 })
