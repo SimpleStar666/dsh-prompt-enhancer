@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildMetaPrompt, cleanModelOutput, streamText, rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS, REASONING_EFFORTS } from '../src/rewrite.mjs';
+import { buildMetaPrompt, cleanModelOutput, streamText, rewriteWithLlm, rewriteWithLlmRetry, resolveReasoningEffort, classifyLlmError, REWRITE_DEFAULTS, REASONING_EFFORTS } from '../src/rewrite.mjs';
 
 function mockLlm(texts, chunks = null) {
   const calls = [];
@@ -48,12 +48,13 @@ function capableLlm(efforts, { text = '增强后的提示词' } = {}) {
   return llm;
 }
 
-test('meta prompt teaches the flowing-paragraph house style without local-label contamination', () => {
-  const meta = buildMetaPrompt({ raw: '我想做一个美化dsh交互界面的插件', locale: 'auto' });
-  assert.match(meta, /flowing paragraph/, 'the rewrite must prefer paragraphs');
-  assert.match(meta, /capabilities, options and constraints such a task normally involves/, 'general-scope expansion is the reference behaviour');
+test('meta prompt teaches the descriptive-request house style without local-label contamination', () => {
+  const meta = buildMetaPrompt({ locale: 'auto' });
+  assert.match(meta, /flowing descriptive request/, 'the rewrite must be a descriptive request, not a process brief');
+  assert.match(meta, /capabilities and options such a task naturally involves/, 'general-scope expansion is the reference behaviour');
   assert.match(meta, /do NOT pick one, do NOT add disclaimers/);
   assert.match(meta, /明确插件的目标平台与适用范围/, 'the situational-defer example shows the expected phrasing');
+  assert.match(meta, /60 to 180 characters/, 'the length budget fights the over-elaboration the bench exposed');
   assert.doesNotMatch(meta, /Add light structure|SUGGESTED CLARIFICATIONS|已表达事实|Already expressed in the draft/, 'no label-injecting evidence block');
   assert.doesNotMatch(meta, /我想做/, 'the raw draft never enters the meta prompt');
 });
@@ -207,5 +208,53 @@ test('rewrite defaults are bounded and reproducible', () => {
   assert.ok(REWRITE_DEFAULTS.maxOutputChars > 0);
   assert.ok(REWRITE_DEFAULTS.maxOutputRatio > 1);
   assert.equal(REWRITE_DEFAULTS.maxTokens, 768, 'v0.3.4 trims the output budget for the concise style');
+  assert.equal(REWRITE_DEFAULTS.maxOutputRatio, 2.5, 'v0.3.6 tightens the runaway guard for the descriptive style');
   assert.deepEqual(REASONING_EFFORTS, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+});
+
+test('classifyLlmError separates fatal provider limits from retryable failures', () => {
+  const quota = classifyLlmError(new Error('429: {"code":"USAGE_LIMIT_EXCEEDED","message":"error: code=429 reason=\"MONTHLY_LIMIT_EXCEEDED\" message=\"monthly usage limit exceeded\" metadata=map[]"}'));
+  assert.equal(quota.code, 'quota');
+  assert.equal(quota.retryable, false, 'a monthly-limit 429 must not tell the user to retry');
+  assert.match(quota.message, /额度已用尽/);
+  assert.equal(quota.detail, 'USAGE_LIMIT_EXCEEDED');
+
+  const rate = classifyLlmError({ status: 429, message: '429 Too Many Requests' });
+  assert.equal(rate.code, 'rate');
+  assert.equal(rate.retryable, true);
+
+  assert.equal(classifyLlmError({ status: 401, message: 'invalid api key' }).code, 'auth');
+  assert.equal(classifyLlmError({ status: 503, message: 'overloaded' }).retryable, true);
+  assert.equal(classifyLlmError(new Error('the model request timed out after 120000ms')).retryable, true);
+  assert.equal(classifyLlmError(new Error('boom')).code, 'unknown');
+});
+
+test('rewriteWithLlmRetry retries transient failures but not fatal ones', async () => {
+  const route = { provider: 'p', model: 'm' };
+  const transient = mockLlm();
+  transient.stream = (request) => {
+    transient.calls.push(request);
+    if (transient.calls.length === 1) {
+      const error = new Error('503 overloaded');
+      error.status = 503;
+      throw error;
+    }
+    return (async function* () { yield { type: 'text-delta', text: '结果' }; yield { type: 'finish', reason: { kind: 'stop' } }; })();
+  };
+  const ok = await rewriteWithLlmRetry(transient, route, '草稿', { retryDelayMs: 1 }, { attempts: 2 });
+  assert.equal(ok, '结果');
+  assert.equal(transient.calls.length, 2, 'a transient failure is retried once');
+
+  const fatal = mockLlm();
+  fatal.stream = (request) => {
+    fatal.calls.push(request);
+    const error = new Error('429: {"code":"USAGE_LIMIT_EXCEEDED"}');
+    error.status = 429;
+    throw error;
+  };
+  await assert.rejects(
+    rewriteWithLlmRetry(fatal, route, '草稿', { retryDelayMs: 1 }, { attempts: 3 }),
+    /USAGE_LIMIT_EXCEEDED/,
+  );
+  assert.equal(fatal.calls.length, 1, 'a quota failure is never retried');
 });

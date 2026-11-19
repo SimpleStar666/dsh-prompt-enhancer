@@ -33,6 +33,7 @@ window.__ModuleLoader__.load({
         'button.busy': '正在增强提示词…',
         'button.undo': '撤销增强，恢复原文',
         'button.error': '增强失败：{message}（可重试）',
+        'button.errorFatal': '增强失败：{message}',
         'button.empty': '请先输入内容',
       },
       en: {
@@ -43,6 +44,7 @@ window.__ModuleLoader__.load({
         'button.busy': 'Enhancing prompt…',
         'button.undo': 'Undo enhancement and restore the original',
         'button.error': 'Enhancement failed: {message} (click to retry)',
+        'button.errorFatal': 'Enhancement failed: {message}',
         'button.empty': 'Type something first',
       },
     }
@@ -91,6 +93,7 @@ window.__ModuleLoader__.load({
       // The `error` state doubles as the tooltip; the message and the visual
       // marker use separate state so the button can show feedback immediately.
       const [error, setError] = useState(null)
+      const [retryable, setRetryable] = useState(false)
       const [failed, setFailed] = useState(false)
       const [undo, setUndo] = useState(null)
       const request = useRef(0)
@@ -132,6 +135,7 @@ window.__ModuleLoader__.load({
         const raw = (typeof draftFromHook === 'string' ? draftFromHook : readDraftFromDom()).trim()
         if (!raw) {
           setError(label('button.empty'))
+          setRetryable(false)
           setFailed(true)
           return
         }
@@ -153,7 +157,12 @@ window.__ModuleLoader__.load({
           try { payload = await response.json() } catch { payload = null }
           if (!response.ok || !payload || payload.ok === false) {
             const message = payload?.error || payload?.message || `HTTP ${response.status}`
-            throw new Error(message)
+            // `retryable` gates the tooltip suffix: a fatal provider failure
+            // (quota exhausted, auth, unknown model) must not tell the user to
+            // click again — that only spends another queue slot.
+            const error = new Error(message)
+            error.retryable = Boolean(payload?.retryable)
+            throw error
           }
           if (request.current !== revision) return
           const enhanced = typeof payload.enhancedPrompt === 'string' ? payload.enhancedPrompt.trim() : ''
@@ -164,6 +173,7 @@ window.__ModuleLoader__.load({
         } catch (cause) {
           if (request.current !== revision) return
           setError(cause?.message ?? String(cause))
+          setRetryable(Boolean(cause?.retryable))
           setFailed(true)
         } finally {
           if (abort.current === controller) abort.current = null
@@ -177,7 +187,7 @@ window.__ModuleLoader__.load({
       const label = busy
         ? t('button.busy')
         : error
-          ? format(t('button.error'), { message: error })
+          ? format(retryable ? t('button.error') : t('button.errorFatal'), { message: error })
           : showUndo
             ? t('button.undo')
             : t('button.enhance')

@@ -1,0 +1,232 @@
+{
+  "meta": {
+    "model": "loomy/deepseek-v4-flash-1017",
+    "effort": "none",
+    "maxTokens": 768,
+    "baseUrl": "http://127.0.0.1:8326/v1",
+    "at": "2026-11-19T01:58:43.237Z"
+  },
+  "results": [
+    {
+      "id": "crawler-zh",
+      "locale": "zh",
+      "draft": "帮我写个爬虫",
+      "expect": [
+        "爬虫",
+        "保存",
+        "重试"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**",
+        "（默认："
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 6075,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "ui-plugin-zh",
+      "locale": "zh",
+      "draft": "做一个美化UI的插件",
+      "expect": [
+        "配色",
+        "预览"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**",
+        "Chrome",
+        "Manifest V3"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 269,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "bug-report-zh",
+      "locale": "zh",
+      "draft": "登录按钮点了没反应，帮我看看",
+      "expect": [
+        "登录",
+        "复现"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 105,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "refactor-zh",
+      "locale": "zh",
+      "draft": "把这个函数拆一下，太长了",
+      "expect": [
+        "函数"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 84,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "rename-en",
+      "locale": "en",
+      "draft": "write a python script to rename files",
+      "expect": [
+        "rename",
+        "files"
+      ],
+      "forbid": [
+        "Goal:",
+        "Context:",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 88,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "sales-zh",
+      "locale": "zh",
+      "draft": "分析一下这份销售数据",
+      "expect": [
+        "销售",
+        "数据"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 163,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "account-app-zh",
+      "locale": "zh",
+      "draft": "我有个想法，做个记账app",
+      "expect": [
+        "记账"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 80,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "readme-zh",
+      "locale": "zh",
+      "draft": "把 README 翻译成英文，顺便修一下里面的链接",
+      "expect": [
+        "README",
+        "链接"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 90,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "regex-zh",
+      "locale": "zh",
+      "draft": "为什么我的正则匹配不到中文？",
+      "expect": [
+        "正则"
+      ],
+      "forbid": [
+        "目标：",
+        "背景：",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 82,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    },
+    {
+      "id": "jwt-en",
+      "locale": "en",
+      "draft": "add jwt auth to my express api",
+      "expect": [
+        "JWT",
+        "express"
+      ],
+      "forbid": [
+        "Goal:",
+        "Context:",
+        "**"
+      ],
+      "text": "",
+      "rawText": "",
+      "totalMs": 96,
+      "firstTextMs": null,
+      "reasoningChars": 0,
+      "issues": [
+        "empty output"
+      ]
+    }
+  ]
+}

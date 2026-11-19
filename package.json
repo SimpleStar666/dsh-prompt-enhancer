@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-enhancer",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "DSH 输入框一键提示词增强：模型改写草稿并回填，发送前可审阅；不自动发送。",
   "type": "module",
   "private": true,

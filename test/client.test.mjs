@@ -168,7 +168,7 @@ function findButton(node, predicate) {
 
 const t = (key, values) => {
   if (values && values.message !== undefined) return `${key}:${values.message}`;
-  if (key === 'button.error') return 'button.error:{message}';
+  if (key === 'button.error' || key === 'button.errorFatal') return `${key}:{message}`;
   return key;
 };
 
@@ -285,15 +285,15 @@ test('without a draft hook the button stays enabled and reports empty on click',
   const button = findButton(tree);
   assert.equal(button.props.disabled, false);
   await button.props.onClick();
-  const after = findButton(harness.rerender({}));
+  const after = findButton(harness.rerender({ t }));
   assert.equal(after.props['data-error'], 'true');
   assert.match(after.props.title, /button\.empty/);
   harness.dispose();
 });
 
-test('a failed request keeps the draft untouched and reports a retryable error', async () => {
+test('a failed request keeps the draft untouched and reports a fatal error without a retry hint', async () => {
   const harness = hookHarness();
-  const fetch = async () => ({ ok: false, status: 409, json: async () => ({ ok: false, error: '没有可用的模型路由' }) });
+  const fetch = async () => ({ ok: false, status: 200, json: async () => ({ ok: false, error: '没有可用的模型路由', retryable: false }) });
   const { client } = loadClient({ React: harness.React, fetch });
   const writes = [];
   const setDraft = (value) => { writes.push(value); };
@@ -302,9 +302,23 @@ test('a failed request keeps the draft untouched and reports a retryable error',
   const button = findButton(tree);
   await button.props.onClick();
   assert.deepEqual(writes, []);
-  const after = findButton(harness.rerender({}));
+  const after = findButton(harness.rerender({ t }));
   assert.match(after.props.title, /没有可用的模型路由/);
+  assert.match(after.props.title, /button\.errorFatal/, 'a fatal failure must not suggest retrying');
   assert.equal(after.props['data-error'], 'true');
+  harness.dispose();
+});
+
+test('a transient failure keeps the draft untouched and keeps the retry hint', async () => {
+  const harness = hookHarness();
+  const fetch = async () => ({ ok: false, status: 200, json: async () => ({ ok: false, error: '模型服务限流', retryable: true }) });
+  const { client } = loadClient({ React: harness.React, fetch });
+  const setDraft = () => { throw new Error('setDraft must not run'); };
+  const tree = harness.mount(client.__test.EnhanceButton, { sessionId: 's1', inputActions: { setDraft }, useInput: () => '写个周报', t });
+  await findButton(tree).props.onClick();
+  const after = findButton(harness.rerender({ t }));
+  assert.match(after.props.title, /模型服务限流/);
+  assert.match(after.props.title, /button\.error/, 'a transient failure still offers a retry');
   harness.dispose();
 });
 

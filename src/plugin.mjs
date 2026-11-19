@@ -12,9 +12,9 @@
 
 import { Config, DEFAULTS, REASONING_EFFORTS, normalizeConfig } from './schema.mjs';
 import { enhancePrompt, detectGaps, normalizeText, containsSensitiveData } from './enhancer.mjs';
-import { rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS } from './rewrite.mjs';
+import { rewriteWithLlm, rewriteWithLlmRetry, resolveReasoningEffort, classifyLlmError, REWRITE_DEFAULTS } from './rewrite.mjs';
 
-export { Config, DEFAULTS, REASONING_EFFORTS, normalizeConfig, enhancePrompt, detectGaps, normalizeText, containsSensitiveData, rewriteWithLlm, resolveReasoningEffort, REWRITE_DEFAULTS };
+export { Config, DEFAULTS, REASONING_EFFORTS, normalizeConfig, enhancePrompt, detectGaps, normalizeText, containsSensitiveData, rewriteWithLlm, rewriteWithLlmRetry, resolveReasoningEffort, classifyLlmError, REWRITE_DEFAULTS };
 
 export const name = 'dsh-prompt-enhancer';
 /** `connection` is optional in practice; apply() also works in headless hosts. */
@@ -65,7 +65,7 @@ async function readBody(request) {
   return INVALID_BODY;
 }
 
-function fallbackResult(prompt, error) {
+function fallbackResult(prompt, error, info) {
   return {
     ok: false,
     enhancedPrompt: typeof prompt === 'string' ? prompt : '',
@@ -77,7 +77,14 @@ function fallbackResult(prompt, error) {
     recognizedFacts: [],
     clarifications: [],
     reviewNotes: [],
-    error: `提示词增强失败：${error?.message ?? String(error)}`,
+    // Structured failure info for the client: `retryable` gates the "（可重试）"
+    // suffix — a 429 MONTHLY_LIMIT_EXCEEDED is fatal for this session, so
+    // telling the user "click to retry" only wastes a queue slot on a shared
+    // relay. `error` stays the one sentence that fits the tooltip.
+    errorCode: info?.code ?? 'unknown',
+    retryable: Boolean(info?.retryable),
+    detail: info?.detail ?? '',
+    error: info?.message ?? `提示词增强失败：${error?.message ?? String(error)}`,
   };
 }
 
@@ -230,14 +237,14 @@ export function apply(ctx, rawConfig) {
         }
         try {
           const metrics = {};
-          const enhanced = await rewriteWithLlm(state.llm, route, prompt, {
+          const enhanced = await rewriteWithLlmRetry(state.llm, route, prompt, {
             locale: effectiveConfig.locale,
             maxTokens: effectiveConfig.maxTokens,
             timeoutMs: effectiveConfig.timeoutMs,
             reasoningEffort: effectiveConfig.reasoningEffort,
             metrics,
             signal: request?.signal,
-          });
+          }, { attempts: 2, retryDelayMs: 400 });
           if (route === lastRoute || (!config.provider && !config.model)) lastRoute = route;
           const local = enhancePrompt(prompt, effectiveConfig);
           return jsonResponse({
@@ -266,7 +273,9 @@ export function apply(ctx, rawConfig) {
             config: effectiveConfig,
           });
         } catch (error) {
-          return jsonResponse({ ...fallbackResult(prompt, error), config: effectiveConfig });
+          // Provider failures get the classified, actionable message; host-side
+          // failures (no route, disabled, oversized) keep their raw text.
+          return jsonResponse({ ...fallbackResult(prompt, error, classifyLlmError(error)), config: effectiveConfig });
         }
       }
       return jsonResponse({ ok: false, error: '未找到。' }, 404);

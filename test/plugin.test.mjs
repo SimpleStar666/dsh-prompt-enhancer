@@ -127,6 +127,32 @@ test('without any model route enhance fails with 409 and keeps the original', as
   assert.equal(result.enhancedPrompt, '写个周报');
 });
 
+test('a fatal provider limit is reported with retryable=false instead of a misleading retry hint', async () => {
+  const quotaError = Object.assign(new Error(
+    '429: {"code":"USAGE_LIMIT_EXCEEDED","message":"error: code=429 reason=\"MONTHLY_LIMIT_EXCEEDED\" message=\"monthly usage limit exceeded\" metadata=map[]"}',
+  ), { status: 429 });
+  const calls = [];
+  const throwingLlm = {
+    stream(options) {
+      calls.push(options);
+      return (async function* () { throw quotaError; })();
+    },
+  };
+  const { registrations } = createHost({
+    llm: throwingLlm,
+    agentDefaultModel: { currentSelection: () => ({ provider: 'loomy', model: 'deepseek-v4-flash-1017' }) },
+  });
+  const route = routeOf(registrations, ENHANCE_PATH);
+  const response = await route.fetch(request(ENHANCE_PATH, 'POST', { text: '写个周报' }));
+  assert.equal(response.status, 200);
+  const result = await responseBody(response);
+  assert.equal(result.ok, false);
+  assert.equal(result.retryable, false, 'a monthly-limit 429 must not tell the user to retry');
+  assert.equal(result.errorCode, 'quota');
+  assert.match(result.error, /额度已用尽/);
+  assert.equal(calls.length, 1, 'a fatal provider failure is not retried');
+});
+
 test('route precedence: config, request hint, remembered agent route, then shared default', async () => {
   const llm = mockLlm();
   const { registrations, listeners } = createHost({
@@ -287,7 +313,9 @@ test('model failures return the original prompt with the failure explained', asy
   const result = await responseBody(response);
   assert.equal(result.ok, false);
   assert.equal(result.enhancedPrompt, '写个周报');
-  assert.match(result.error, /配额不足/);
+  assert.match(result.error, /额度已用尽/);
+  assert.equal(result.errorCode, 'quota');
+  assert.equal(result.retryable, false);
 });
 
 test('apply never subscribes to waterfall events that require next()', () => {
